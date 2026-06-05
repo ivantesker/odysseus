@@ -14,9 +14,9 @@ import subprocess
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 
 
 AREA_RULES = [
@@ -521,7 +521,7 @@ def reference_time(prs: list[PullRequest]) -> datetime:
     parsed = [value for value in (parse_datetime(pr.updated_at) for pr in prs) if value is not None]
     if parsed:
         return max(parsed)
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def parse_datetime(value: str) -> datetime | None:
@@ -532,7 +532,7 @@ def parse_datetime(value: str) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 

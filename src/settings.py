@@ -188,7 +188,7 @@ def load_settings() -> dict:
     if _settings_cache and (now - _settings_cache[0]) < _CACHE_TTL:
         return _settings_cache[1]
     try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
             saved = json.load(f)
         if not isinstance(saved, dict):
             raise ValueError("settings must be an object")
@@ -220,7 +220,7 @@ def is_setting_overridden(key: str) -> bool:
     default (e.g. adaptive budgets) use this to read the raw saved file.
     """
     try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
             saved = json.load(f)
         return isinstance(saved, dict) and key in saved
     except (FileNotFoundError, json.JSONDecodeError):
@@ -271,7 +271,7 @@ def load_features() -> dict:
     if _features_cache and (now - _features_cache[0]) < _CACHE_TTL:
         return _features_cache[1]
     try:
-        with open(FEATURES_FILE, "r", encoding="utf-8") as f:
+        with open(FEATURES_FILE, encoding="utf-8") as f:
             saved = json.load(f)
         if not isinstance(saved, dict):
             raise ValueError("features must be an object")

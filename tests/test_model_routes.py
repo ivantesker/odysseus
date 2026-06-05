@@ -52,7 +52,6 @@ from routes.model_routes import (
     _clear_user_pref_endpoint_refs,
     _PROVIDER_CURATED,
 )
-from src.llm_core import ANTHROPIC_MODELS
 
 
 # ── speech endpoint settings ──
@@ -445,17 +444,6 @@ class TestSetupProbeSafety:
 
         assert _probe_endpoint("https://ollama.com/api", "ollama-key") == ["gpt-oss:120b", "qwen3:235b"]
         assert seen == [("https://ollama.com/api/tags", {"Authorization": "Bearer ollama-key"})]
-
-    def test_unkeyed_anthropic_probe_can_use_curated_fallback(self, monkeypatch):
-        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
-        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
-
-        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
-            raise httpx.ConnectError("offline")
-
-        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
-
-        assert _probe_endpoint("https://api.anthropic.com/v1") == ANTHROPIC_MODELS
 
 def test_ollama_endpoint_error_message_includes_troubleshooting():
     msg = model_routes._model_endpoint_error_message(

@@ -71,7 +71,7 @@ async def maybe_extract_skill(
     headers: dict,
     round_count: int,
     tool_count: int,
-    owner: Optional[str] = None,
+    owner: str | None = None,
 ):
     """Extract a skill if the agent run was complex enough."""
     if not model:

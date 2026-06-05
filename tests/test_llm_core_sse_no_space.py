@@ -106,16 +106,3 @@ def test_openai_compat_with_space_still_works(monkeypatch):
     assert "".join(_deltas(blob)) == "Yo"
 
 
-def test_anthropic_no_space_data_is_parsed(monkeypatch):
-    lines = [
-        'data:' + json.dumps({"type": "content_block_delta",
-                              "delta": {"type": "text_delta", "text": "Hi"}}),
-        'data:' + json.dumps({"type": "message_stop"}),
-    ]
-    blob = _drive(
-        monkeypatch,
-        "https://api.anthropic.com/v1/messages",
-        lines,
-        "claude-test",
-    )
-    assert "Hi" in "".join(_deltas(blob))

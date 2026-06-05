@@ -111,7 +111,7 @@ def _running_in_container(dockerenv_path="/.dockerenv", cgroup_path="/proc/1/cgr
     if os.path.exists(dockerenv_path):
         return True
     try:
-        with open(cgroup_path, "r", encoding="utf-8") as fh:
+        with open(cgroup_path, encoding="utf-8") as fh:
             contents = fh.read()
     except OSError:
         return False
@@ -385,7 +385,7 @@ async def _create_shell(command: str, **kwargs):
     return await asyncio.create_subprocess_shell(command, **kwargs)
 
 
-async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
+async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> dict[str, Any]:
     """Run a shell command and return stdout/stderr/exit_code."""
     proc = None
     try:
@@ -401,7 +401,7 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
         stdout = stdout_b.decode(errors="replace")[:MAX_OUTPUT]
         stderr = stderr_b.decode(errors="replace")[:MAX_OUTPUT]
         return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
-    except asyncio.TimeoutError:
+    except TimeoutError:
         if proc:
             try:
                 proc.kill()
@@ -471,7 +471,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
                     loop.run_in_executor(None, _pty_read, master_fd),
                     timeout=2.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -736,7 +736,7 @@ async def _generate_win_detached(cmd: str, request: Request):
                     for line in lines[lines_sent:]:
                         yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
                     lines_sent = len(lines)
-                exit_code = int((exit_path.read_text(encoding="utf-8", errors="replace").strip() or "0"))
+                exit_code = int(exit_path.read_text(encoding="utf-8", errors="replace").strip() or "0")
             except Exception:
                 exit_code = 0
             break
@@ -754,7 +754,7 @@ def setup_shell_routes() -> APIRouter:
     router = APIRouter(tags=["shell"])
 
     @router.post("/api/shell/exec")
-    async def shell_exec(request: Request, req: ShellExecRequest) -> Dict[str, Any]:
+    async def shell_exec(request: Request, req: ShellExecRequest) -> dict[str, Any]:
         """Execute a shell command and return output. Admin only."""
         _require_admin(request)
         cmd = req.command.strip()
@@ -848,14 +848,14 @@ def setup_shell_routes() -> APIRouter:
                     if deadline:
                         remaining = deadline - loop.time()
                         if remaining <= 0:
-                            raise asyncio.TimeoutError()
+                            raise TimeoutError()
                         wait = min(remaining, 2.0)
                     else:
                         wait = 2.0
 
                     try:
                         name, text = await asyncio.wait_for(q.get(), timeout=wait)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         if await request.is_disconnected():
                             if proc:
                                 proc.kill()
@@ -870,7 +870,7 @@ def setup_shell_routes() -> APIRouter:
                 await proc.wait()
                 yield f"data: {json.dumps({'exit_code': proc.returncode})}\n\n"
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if proc:
                     try:
                         proc.kill()
@@ -959,7 +959,7 @@ def setup_shell_routes() -> APIRouter:
                         }
                         break
             except ValueError as e:
-                raise HTTPException(400, str(e))
+                raise HTTPException(400, str(e)) from e
             except Exception:
                 remote_status = {}
         if host and remote_system_names:
@@ -980,7 +980,7 @@ def setup_shell_routes() -> APIRouter:
                     if sep and name in remote_system_names:
                         remote_status[name] = value == "1"
             except ValueError as e:
-                raise HTTPException(400, str(e))
+                raise HTTPException(400, str(e)) from e
             except Exception:
                 pass
 
@@ -1090,13 +1090,13 @@ def setup_shell_routes() -> APIRouter:
         try:
             argv = (_ssh_base_argv(host, ssh_port) + [cmd]) if host else ["bash", "-lc", cmd]
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"ok": False, "error": "Rebuild-engine command timed out."}
         if proc.returncode == 0:
             return {"ok": True, "output": out.decode("utf-8", errors="replace")[-400:]}

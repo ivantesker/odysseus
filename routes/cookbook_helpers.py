@@ -503,7 +503,7 @@ def _check_serve_binary(seg: str) -> None:
     try:
         tokens = shlex.split(seg) if seg.strip() else []
     except ValueError:
-        raise HTTPException(400, "Invalid cmd — could not parse")
+        raise HTTPException(400, "Invalid cmd — could not parse") from None
     if not tokens:
         return
     env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -795,7 +795,7 @@ def _safe_env_prefix(ep: str | None) -> str | None:
     try:
         parts = shlex.split(ep, posix=True)
     except ValueError:
-        raise HTTPException(400, "Invalid env_prefix")
+        raise HTTPException(400, "Invalid env_prefix") from None
     if len(parts) != 2 or parts[0] not in {"source", "."}:
         # Bash conda activation emitted by the frontend:
         #   eval "$(conda shell.bash hook)" && conda activate ENV
@@ -805,7 +805,7 @@ def _safe_env_prefix(ep: str | None) -> str | None:
             try:
                 env_parts = shlex.split(env, posix=True)
             except ValueError:
-                raise HTTPException(400, "Invalid env_prefix")
+                raise HTTPException(400, "Invalid env_prefix") from None
             if len(env_parts) != 1:
                 raise HTTPException(400, "Invalid env_prefix")
             return 'eval "$(conda shell.bash hook)" && conda activate ' + shlex.quote(env_parts[0])

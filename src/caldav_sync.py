@@ -29,7 +29,7 @@ import logging
 import os
 import socket
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, UTC
 from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ def _validate_caldav_hostname(host: str) -> None:
     try:
         addrs = _resolve_caldav_host_ips(host)
     except OSError:
-        raise ValueError("CalDAV URL host does not resolve")
+        raise ValueError("CalDAV URL host does not resolve") from None
     if not addrs:
         raise ValueError("CalDAV URL host does not resolve")
     for addr in addrs:
@@ -119,7 +119,7 @@ def validate_caldav_url(raw_url: str) -> str:
     try:
         parsed.port
     except ValueError:
-        raise ValueError("CalDAV URL has an invalid port")
+        raise ValueError("CalDAV URL has an invalid port") from None
     host = (parsed.hostname or "").lower()
     if host in _BLOCKED_HOSTS or host.endswith(".localhost"):
         raise ValueError("CalDAV URL host is not allowed")
@@ -141,7 +141,7 @@ def _to_utc_naive(dt):
     All-day events stay as date and get widened to datetime here."""
     if isinstance(dt, datetime):
         if dt.tzinfo is not None:
-            return dt.astimezone(timezone.utc).replace(tzinfo=None), False
+            return dt.astimezone(UTC).replace(tzinfo=None), False
         return dt, False  # naive → treat as local
     # date-only (all-day)
     return datetime(dt.year, dt.month, dt.day), True
@@ -250,8 +250,8 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
             result["errors"].append(f"No calendars and URL fallback failed: {e}")
             return result
 
-    start = datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)
-    end = datetime.utcnow() + timedelta(days=_LOOKAHEAD_DAYS)
+    start = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=_LOOKBACK_DAYS)
+    end = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=_LOOKAHEAD_DAYS)
 
     db = SessionLocal()
     try:

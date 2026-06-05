@@ -42,6 +42,27 @@ jobs:
             node --check "$f"
           done
 
+  lint:
+    name: Lint (ruff / mypy)
+    runs-on: ubuntu-latest
+    # Informational for now: configs are in place but the legacy codebase is not
+    # yet clean. Format/lint/type issues are surfaced without blocking merges.
+    # Flip continue-on-error off (ratchet) once each tool is green.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.11"
+      - run: uv pip install --system -r requirements-dev.txt
+      - name: ruff check
+        run: ruff check .
+      - name: ruff format --check
+        run: ruff format --check .
+      - name: mypy
+        run: mypy app.py core routes src
+
   python-tests:
     name: Python tests (pytest)
     runs-on: ubuntu-latest

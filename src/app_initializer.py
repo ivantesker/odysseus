@@ -6,7 +6,7 @@ from typing import Dict, Any
 
 from src.constants import (
     DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR,
-    SESSIONS_FILE, DEFAULT_HOST, OPENAI_API_KEY
+    SESSIONS_FILE, DEFAULT_HOST
 )
 from src.memory import MemoryManager
 from src.memory_provider import MemoryProviderRegistry, NativeMemoryProvider
@@ -29,8 +29,8 @@ def create_directories():
     """Create necessary directories if they don't exist."""
     for directory in (DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR):
         os.makedirs(directory, exist_ok=True)
-        
-def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
+
+def initialize_managers(base_dir: str, rag_manager=None) -> dict[str, Any]:
     """
     Initialize all manager and handler instances.
 
@@ -81,7 +81,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     # Initialize processors
     chat_processor = ChatProcessor(memory_manager, personal_docs_manager, memory_vector=memory_vector, skills_manager=skills_manager)
     research_handler = ResearchHandler()
-    
+
     # Initialize chat handler with all dependencies
     chat_handler = ChatHandler(
         session_manager=session_manager,
@@ -91,16 +91,16 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
         preset_manager=preset_manager,
         upload_handler=upload_handler,
     )
-    
+
     # Initialize model discovery
-    model_discovery = ModelDiscovery(DEFAULT_HOST, OPENAI_API_KEY)
-    
+    model_discovery = ModelDiscovery(DEFAULT_HOST)
+
     # Load and apply saved API keys
     saved_keys = api_key_manager.load()
     if "brave" in saved_keys:
         update_search_config(api_key=saved_keys["brave"])
         logger.info("Loaded Brave API key from saved configuration")
-    
+
     return {
         "memory_manager": memory_manager,
         "memory_vector": memory_vector,

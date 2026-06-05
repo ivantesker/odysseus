@@ -43,7 +43,7 @@ def _normalize_signature_png(raw: str) -> str:
     try:
         payload = base64.b64decode(b64, validate=True)
     except Exception:
-        raise HTTPException(400, "Signature data must be base64-encoded PNG bytes")
+        raise HTTPException(400, "Signature data must be base64-encoded PNG bytes") from None
     if not payload:
         raise HTTPException(400, "Signature PNG is empty")
     if len(payload) > _MAX_SIGNATURE_BYTES:
@@ -53,7 +53,7 @@ def _normalize_signature_png(raw: str) -> str:
     return base64.b64encode(payload).decode("ascii")
 
 
-def _signature_dimension(value: Optional[int]) -> Optional[int]:
+def _signature_dimension(value: int | None) -> int | None:
     if value is None:
         return None
     if not isinstance(value, int) or value < 1 or value > _MAX_SIGNATURE_DIMENSION:
@@ -62,14 +62,14 @@ def _signature_dimension(value: Optional[int]) -> Optional[int]:
 
 
 class SignatureCreate(BaseModel):
-    name: Optional[str] = None
+    name: str | None = None
     data: str  # base64 PNG, with or without `data:image/png;base64,` prefix
-    width: Optional[int] = None
-    height: Optional[int] = None
-    svg: Optional[str] = None
+    width: int | None = None
+    height: int | None = None
+    svg: str | None = None
 
 
-def _to_dict(s: Signature) -> Dict[str, Any]:
+def _to_dict(s: Signature) -> dict[str, Any]:
     return {
         "id": s.id,
         "name": s.name,
@@ -84,7 +84,7 @@ def setup_signature_routes() -> APIRouter:
     router = APIRouter(tags=["signatures"])
 
     @router.get("/api/signatures")
-    async def list_signatures(request: Request) -> Dict[str, Any]:
+    async def list_signatures(request: Request) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -99,7 +99,7 @@ def setup_signature_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/signatures")
-    async def create_signature(request: Request, req: SignatureCreate) -> Dict[str, Any]:
+    async def create_signature(request: Request, req: SignatureCreate) -> dict[str, Any]:
         user = get_current_user(request)
         b64 = _normalize_signature_png(req.data)
         width = _signature_dimension(req.width)
@@ -123,12 +123,12 @@ def setup_signature_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error(f"Failed to save signature: {e}")
-            raise HTTPException(500, f"Failed to save signature: {e}")
+            raise HTTPException(500, f"Failed to save signature: {e}") from e
         finally:
             db.close()
 
     @router.delete("/api/signatures/{sig_id}")
-    async def delete_signature(sig_id: str, request: Request) -> Dict[str, Any]:
+    async def delete_signature(sig_id: str, request: Request) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -144,7 +144,7 @@ def setup_signature_routes() -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, f"Failed to delete signature: {e}")
+            raise HTTPException(500, f"Failed to delete signature: {e}") from e
         finally:
             db.close()
 

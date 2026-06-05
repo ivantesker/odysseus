@@ -20,7 +20,7 @@ def test_strip_think_cases():
 
     # 5. Content-before-opener preserved (part of mid-text unclosed)
     assert strip_think("Prefix text <think> trailing thoughts") == "Prefix text"
-    
+
     # 6. Multiple blocks (closed + unclosed)
     assert strip_think("Hello! <think> closed </think> Here is the answer. <think> unclosed") == "Hello! Here is the answer."
 

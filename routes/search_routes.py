@@ -14,14 +14,14 @@ from services.search.providers import _get_provider_key, _get_search_instance
 logger = logging.getLogger(__name__)
 
 
-async def _request_values(request: Request) -> Dict[str, Any]:
+async def _request_values(request: Request) -> dict[str, Any]:
     """Accept JSON, form data, or query params for search endpoints.
 
     The browser UI posts FormData, while the agent's generic app_api tool
     posts JSON. FastAPI Form(...) rejects JSON with a 422 before our handler
     runs, which made the model think SearXNG was broken.
     """
-    values: Dict[str, Any] = dict(request.query_params)
+    values: dict[str, Any] = dict(request.query_params)
     content_type = (request.headers.get("content-type") or "").lower()
     try:
         if "application/json" in content_type:
@@ -40,11 +40,11 @@ def setup_search_routes(config) -> APIRouter:
     router = APIRouter(tags=["search"])
 
     @router.get("/api/search/config")
-    async def get_search_settings() -> Dict[str, Any]:
+    async def get_search_settings() -> dict[str, Any]:
         return get_search_config()
 
     @router.post("/api/search")
-    async def do_web_search(request: Request) -> Dict[str, Any]:
+    async def do_web_search(request: Request) -> dict[str, Any]:
         """Standalone web search — returns context string + source list.
 
         Used by Compare mode to pre-search once and share results across panes.
@@ -85,7 +85,7 @@ def setup_search_routes(config) -> APIRouter:
         return providers
 
     @router.post("/api/search/query")
-    async def search_with_provider(request: Request) -> Dict[str, Any]:
+    async def search_with_provider(request: Request) -> dict[str, Any]:
         """Search using a specific provider. Used by compare search mode."""
         values = await _request_values(request)
         query = str(values.get("query") or values.get("q") or "").strip()

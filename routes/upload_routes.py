@@ -50,13 +50,13 @@ def setup_upload_routes(upload_handler):
             raise HTTPException(404, "File not found")
 
         raise HTTPException(404, "File not found")
-    
+
     @router.post("")
-    async def api_upload(request: Request, files: List[UploadFile] = File(...)):
+    async def api_upload(request: Request, files: list[UploadFile] = File(...)):
         """Upload files with enhanced security and organization."""
         if not files:
             raise HTTPException(400, "No files uploaded")
-            
+
         client_ip = request.client.host if request.client else "unknown"
         out = []
 
@@ -75,7 +75,7 @@ def setup_upload_routes(upload_handler):
                 status_code=429,
                 detail=f"Maximum concurrent uploads ({upload_handler.max_concurrent_uploads}) exceeded"
             )
-        
+
         for u in files:
             try:
                 meta = upload_handler.save_upload(u, client_ip, owner=get_current_user(request))
@@ -95,12 +95,12 @@ def setup_upload_routes(upload_handler):
             except Exception as e:
                 logger.error(f"Failed to process upload {u.filename}: {str(e)}")
                 continue
-        
+
         if not out:
             raise HTTPException(500, "All file uploads failed")
-            
+
         return {"files": out}
-    
+
     @router.post("/cleanup")
     async def manual_cleanup(request: Request):
         """Manually trigger cleanup of old uploads."""
@@ -116,7 +116,7 @@ def setup_upload_routes(upload_handler):
             return upload_handler.get_upload_stats()
         except Exception as e:
             logger.error(f"Failed to get upload stats: {e}")
-            raise HTTPException(500, "Failed to get upload statistics")
+            raise HTTPException(500, "Failed to get upload statistics") from e
 
     @router.get("/{file_id}")
     async def download_file(request: Request, file_id: str, thumb: int = 0):
@@ -228,7 +228,7 @@ def setup_upload_routes(upload_handler):
             text = analyze_image_with_vl(path) or ""
         except Exception as e:
             logger.error(f"Vision analysis failed for {file_id}: {e}")
-            raise HTTPException(500, f"Vision analysis failed: {e}")
+            raise HTTPException(500, f"Vision analysis failed: {e}") from e
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
                 f.write(text)
@@ -268,5 +268,5 @@ def setup_upload_routes(upload_handler):
         while True:
             await asyncio.sleep(3600)
             upload_handler.cleanup_rate_limits()
-    
+
     return router, periodic_rate_limit_cleanup

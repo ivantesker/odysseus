@@ -2,7 +2,8 @@
 """Shell service — safe command execution."""
 
 from dataclasses import dataclass
-from typing import Optional, AsyncIterator
+from typing import Optional
+from collections.abc import AsyncIterator
 import asyncio
 from pathlib import Path
 
@@ -34,8 +35,8 @@ class ShellService:
     async def execute(
         self,
         command: str,
-        timeout: Optional[int] = None,
-        cwd: Optional[str] = None,
+        timeout: int | None = None,
+        cwd: str | None = None,
     ) -> ShellResult:
         """
         Execute a shell command.
@@ -69,7 +70,7 @@ class ShellService:
                 stderr=stderr,
                 exit_code=proc.returncode,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if proc:
                 try:
                     proc.kill()
@@ -131,11 +132,11 @@ class ShellService:
             while finished < 2:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
-                    raise asyncio.TimeoutError()
+                    raise TimeoutError()
 
                 try:
                     name, text = await asyncio.wait_for(q.get(), timeout=min(remaining, 2.0))
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 if text is None:
@@ -146,7 +147,7 @@ class ShellService:
             await proc.wait()
             yield {"exit_code": proc.returncode}
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if proc:
                 try:
                     proc.kill()

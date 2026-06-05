@@ -48,7 +48,7 @@ def _gallery_image_path(filename: str) -> Path:
         if os.path.commonpath([str(root), str(path)]) != str(root):
             raise ValueError
     except Exception:
-        raise HTTPException(400, "Unsafe gallery filename")
+        raise HTTPException(400, "Unsafe gallery filename") from None
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
     return path
@@ -175,7 +175,7 @@ def setup_gallery_routes() -> APIRouter:
                 db.commit()
             except Exception as e:
                 db.rollback()
-                raise HTTPException(500, f"DB commit failed: {e}")
+                raise HTTPException(500, f"DB commit failed: {e}") from e
             return {"ok": True, "width": img.width, "height": img.height}
         finally:
             db.close()
@@ -219,7 +219,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             angle = int(data.get("angle", 90))
         except (TypeError, ValueError):
-            raise HTTPException(400, "Invalid angle")
+            raise HTTPException(400, "Invalid angle") from None
         if angle not in (90, -90, 180, 270):
             raise HTTPException(400, "Angle must be 90, -90, 180, or 270")
 
@@ -354,7 +354,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- GET /api/gallery/tags ----
     @router.get("/api/gallery/tags")
-    async def gallery_tags(request: Request) -> Dict[str, Any]:
+    async def gallery_tags(request: Request) -> dict[str, Any]:
         """Return distinct tags across all active gallery images."""
         user = get_current_user(request)
         db = SessionLocal()
@@ -378,16 +378,16 @@ def setup_gallery_routes() -> APIRouter:
     @router.get("/api/gallery/library")
     async def gallery_library(
         request: Request,
-        search: Optional[str] = Query(None),
-        tag: Optional[str] = Query(None),
-        model: Optional[str] = Query(None),
-        album: Optional[str] = Query(None),
+        search: str | None = Query(None),
+        tag: str | None = Query(None),
+        model: str | None = Query(None),
+        album: str | None = Query(None),
         favorites: bool = Query(False),
         sort: str = Query("recent"),
-        seed: Optional[int] = Query(None),
+        seed: int | None = Query(None),
         offset: int = Query(0, ge=0),
         limit: int = Query(24, ge=1, le=100),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -509,7 +509,7 @@ def setup_gallery_routes() -> APIRouter:
             }
         except Exception as e:
             logger.error(f"Failed to fetch gallery library: {e}")
-            raise HTTPException(500, f"Failed to fetch gallery library: {e}")
+            raise HTTPException(500, f"Failed to fetch gallery library: {e}") from e
         finally:
             db.close()
 
@@ -606,7 +606,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/ai-tag-batch")
     async def ai_tag_batch(
         request: Request,
-        album_id: Optional[str] = Query(None),
+        album_id: str | None = Query(None),
         limit: int = Query(200),
     ):
         user = get_current_user(request)
@@ -628,7 +628,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- GET /api/gallery/{image_id} ----
     @router.get("/api/gallery/{image_id}")
-    async def get_gallery_image(request: Request, image_id: str) -> Dict[str, Any]:
+    async def get_gallery_image(request: Request, image_id: str) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -649,7 +649,7 @@ def setup_gallery_routes() -> APIRouter:
 
     # ---- PATCH /api/gallery/{image_id} ----
     @router.patch("/api/gallery/{image_id}")
-    async def patch_gallery_image(request: Request, image_id: str, req: GalleryPatch) -> Dict[str, Any]:
+    async def patch_gallery_image(request: Request, image_id: str, req: GalleryPatch) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -691,7 +691,7 @@ def setup_gallery_routes() -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -755,7 +755,7 @@ def setup_gallery_routes() -> APIRouter:
     # Leaves `ai_tags` intact. Use after a bug populated user-tags with
     # AI-suggested values you never added.
     @router.post("/api/gallery/clear-user-tags")
-    async def clear_gallery_user_tags(request: Request) -> Dict[str, Any]:
+    async def clear_gallery_user_tags(request: Request) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -770,7 +770,7 @@ def setup_gallery_routes() -> APIRouter:
             return {"ok": True, "cleared": cleared}
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -779,7 +779,7 @@ def setup_gallery_routes() -> APIRouter:
     # Leaves user `tags` intact. Use when AI-suggested tags like "dog" /
     # "woman" have leaked into the gallery and you want them gone.
     @router.post("/api/gallery/clear-ai-tags")
-    async def clear_gallery_ai_tags(request: Request, image_id: Optional[str] = Query(None)) -> Dict[str, Any]:
+    async def clear_gallery_ai_tags(request: Request, image_id: str | None = Query(None)) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -796,7 +796,7 @@ def setup_gallery_routes() -> APIRouter:
             return {"ok": True, "cleared": cleared}
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -805,7 +805,7 @@ def setup_gallery_routes() -> APIRouter:
     # tag from `tags` that also appears in `ai_tags` (case-insensitive).
     # Returns how many rows were touched + how many tags removed.
     @router.post("/api/gallery/dedupe-tags")
-    async def dedupe_gallery_tags(request: Request) -> Dict[str, Any]:
+    async def dedupe_gallery_tags(request: Request) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -834,13 +834,13 @@ def setup_gallery_routes() -> APIRouter:
             return {"ok": True, "rows_touched": rows_touched, "tags_removed": tags_removed}
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
     # ---- DELETE /api/gallery/{image_id} ----
     @router.delete("/api/gallery/{image_id}")
-    async def delete_gallery_image(request: Request, image_id: str) -> Dict[str, str]:
+    async def delete_gallery_image(request: Request, image_id: str) -> dict[str, str]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -946,7 +946,7 @@ def setup_gallery_routes() -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -1024,7 +1024,7 @@ def setup_gallery_routes() -> APIRouter:
             try:
                 from PIL import Image
             except ImportError:
-                raise HTTPException(500, "Pillow not installed on server")
+                raise HTTPException(500, "Pillow not installed on server") from None
 
             try:
                 img_bytes = base64.b64decode(body["image"])
@@ -1048,7 +1048,7 @@ def setup_gallery_routes() -> APIRouter:
             except HTTPException:
                 raise
             except Exception as e:
-                raise HTTPException(400, f"Failed to prepare OpenAI request: {e}")
+                raise HTTPException(400, f"Failed to prepare OpenAI request: {e}") from e
 
             width = int(body.get("width") or 1024)
             height = int(body.get("height") or 1024)
@@ -1122,7 +1122,7 @@ def setup_gallery_routes() -> APIRouter:
                         logger.warning(f"Inpaint compose failed, returning raw: {comp_err}")
                         return {"image": raw_b64}
             except httpx.TimeoutException:
-                raise HTTPException(504, "OpenAI inpaint timed out (120s)")
+                raise HTTPException(504, "OpenAI inpaint timed out (120s)") from None
 
         # Self-hosted diffusion server path
         try:
@@ -1136,11 +1136,11 @@ def setup_gallery_routes() -> APIRouter:
                     raise HTTPException(r.status_code, f"Inpaint failed: {r.text[:200]}")
                 return r.json()
         except httpx.TimeoutException:
-            raise HTTPException(504, "Inpaint request timed out (120s)")
+            raise HTTPException(504, "Inpaint request timed out (120s)") from None
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(502, f"Inpaint error: {str(e)}")
+            raise HTTPException(502, f"Inpaint error: {str(e)}") from e
 
     # ---- POST /api/image/harmonize — proper img2img call ----
     # Earlier version routed through inpaint with a full-white mask, but
@@ -1337,9 +1337,9 @@ def setup_gallery_routes() -> APIRouter:
                                         return {"image": _b64.b64encode(ir.content).decode()}
                     last_err = f"{path}: server returned no image"
                 except httpx.ConnectError as e:
-                    raise HTTPException(502, f"Can't reach diffusion server at {base}: {e}")
+                    raise HTTPException(502, f"Can't reach diffusion server at {base}: {e}") from e
                 except httpx.TimeoutException:
-                    raise HTTPException(504, "Harmonize timed out (240s) — restart the diffusion server or lower Color match / disable Seam fix")
+                    raise HTTPException(504, "Harmonize timed out (240s) — restart the diffusion server or lower Color match / disable Seam fix") from None
         raise HTTPException(502,
             f"None of the img2img routes worked on {base}. "
             f"Last response: {last_err or 'unknown'}. "
@@ -1388,7 +1388,7 @@ def setup_gallery_routes() -> APIRouter:
             from PIL import Image
             import numpy as np
         except ImportError as e:
-            raise HTTPException(500, f"Server missing dependency: {e}")
+            raise HTTPException(500, f"Server missing dependency: {e}") from e
         # Decode source image (RGB; Real-ESRGAN doesn't preserve alpha).
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -1438,7 +1438,7 @@ def setup_gallery_routes() -> APIRouter:
             from PIL import Image
             import numpy as np
         except ImportError as e:
-            raise HTTPException(500, f"Server missing dependency: {e}")
+            raise HTTPException(500, f"Server missing dependency: {e}") from e
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
@@ -1622,7 +1622,7 @@ def setup_gallery_routes() -> APIRouter:
             enhanced.save(buf, format="PNG")
             return {"image": base64.b64encode(buf.getvalue()).decode(), "method": "pil"}
         except Exception as e:
-            raise HTTPException(500, f"Face enhancement failed: {str(e)}")
+            raise HTTPException(500, f"Face enhancement failed: {str(e)}") from e
 
     # ---- Album management (path-param routes) ----
 

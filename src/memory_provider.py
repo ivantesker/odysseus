@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
+from collections.abc import Iterable
 
 
 @dataclass
@@ -16,9 +17,9 @@ class MemoryRecord:
     timestamp: int = 0
     category: str = "fact"
     source: str = "unknown"
-    owner: Optional[str] = None
-    session_id: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    owner: str | None = None
+    session_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -27,7 +28,7 @@ class MemorySearchHit:
 
     memory: MemoryRecord
     provider_id: str
-    score: Optional[float] = None
+    score: float | None = None
 
 
 class MemoryProvider(ABC):
@@ -53,11 +54,11 @@ class MemoryProvider(ABC):
         self,
         text: str,
         *,
-        owner: Optional[str] = None,
-        session_id: Optional[str] = None,
+        owner: str | None = None,
+        session_id: str | None = None,
         category: str = "fact",
         source: str = "user",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> MemoryRecord:
         """Store a memory and return the stored record."""
 
@@ -66,29 +67,29 @@ class MemoryProvider(ABC):
         self,
         query: str,
         *,
-        owner: Optional[str] = None,
+        owner: str | None = None,
         top_k: int = 5,
-    ) -> List[MemorySearchHit]:
+    ) -> list[MemorySearchHit]:
         """Return provider memories relevant to the query."""
 
     @abstractmethod
     async def list_memories(
         self,
         *,
-        owner: Optional[str] = None,
+        owner: str | None = None,
         limit: int = 100,
-    ) -> List[MemoryRecord]:
+    ) -> list[MemoryRecord]:
         """List memories visible to the owner."""
 
     @abstractmethod
-    async def delete(self, memory_id: str, *, owner: Optional[str] = None) -> bool:
+    async def delete(self, memory_id: str, *, owner: str | None = None) -> bool:
         """Delete a memory by ID when allowed by the provider."""
 
-    def get_tool_schemas(self) -> List[Dict[str, Any]]:
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
         """Return provider-defined tool schemas when this provider is enabled."""
         return []
 
-    async def handle_tool_call(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def handle_tool_call(self, name: str, arguments: dict[str, Any]) -> Any:
         """Handle a provider-defined tool call."""
         raise KeyError(f"Provider {self.provider_id} does not expose tool {name}")
 
@@ -115,7 +116,7 @@ class NativeMemoryProvider(MemoryProvider):
         self.memory_manager = memory_manager
         self.memory_vector = memory_vector
 
-    def _to_record(self, entry: Dict[str, Any]) -> MemoryRecord:
+    def _to_record(self, entry: dict[str, Any]) -> MemoryRecord:
         metadata = {
             key: value
             for key, value in entry.items()
@@ -140,11 +141,11 @@ class NativeMemoryProvider(MemoryProvider):
         self,
         text: str,
         *,
-        owner: Optional[str] = None,
-        session_id: Optional[str] = None,
+        owner: str | None = None,
+        session_id: str | None = None,
         category: str = "fact",
         source: str = "user",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> MemoryRecord:
         entry = self.memory_manager.add_entry(
             text,
@@ -170,14 +171,14 @@ class NativeMemoryProvider(MemoryProvider):
         self,
         query: str,
         *,
-        owner: Optional[str] = None,
+        owner: str | None = None,
         top_k: int = 5,
-    ) -> List[MemorySearchHit]:
+    ) -> list[MemorySearchHit]:
         memories = self.memory_manager.load(owner=owner)
         by_id = {m.get("id"): m for m in memories}
 
         if self._vector_available():
-            hits: List[MemorySearchHit] = []
+            hits: list[MemorySearchHit] = []
             for result in self.memory_vector.search(query, k=top_k):
                 if not isinstance(result, dict):
                     continue
@@ -214,15 +215,15 @@ class NativeMemoryProvider(MemoryProvider):
     async def list_memories(
         self,
         *,
-        owner: Optional[str] = None,
+        owner: str | None = None,
         limit: int = 100,
-    ) -> List[MemoryRecord]:
+    ) -> list[MemoryRecord]:
         return [
             self._to_record(entry)
             for entry in self.memory_manager.load(owner=owner)[:limit]
         ]
 
-    async def delete(self, memory_id: str, *, owner: Optional[str] = None) -> bool:
+    async def delete(self, memory_id: str, *, owner: str | None = None) -> bool:
         memories = self.memory_manager.load_all()
         remaining = []
         deleted_id = None
@@ -251,8 +252,8 @@ class NativeMemoryProvider(MemoryProvider):
 class MemoryProviderRegistry:
     """Container for native and optional external memory providers."""
 
-    def __init__(self, providers: Optional[Iterable[MemoryProvider]] = None):
-        self._providers: Dict[str, MemoryProvider] = {}
+    def __init__(self, providers: Iterable[MemoryProvider] | None = None):
+        self._providers: dict[str, MemoryProvider] = {}
         for provider in providers or []:
             self.register(provider)
 
@@ -264,15 +265,15 @@ class MemoryProviderRegistry:
     def get(self, provider_id: str) -> MemoryProvider:
         return self._providers[provider_id]
 
-    def all(self) -> List[MemoryProvider]:
+    def all(self) -> list[MemoryProvider]:
         return list(self._providers.values())
 
-    def active(self) -> List[MemoryProvider]:
+    def active(self) -> list[MemoryProvider]:
         return [provider for provider in self._providers.values() if provider.enabled]
 
-    def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        schemas: List[Dict[str, Any]] = []
-        seen: Dict[str, str] = {}
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
+        schemas: list[dict[str, Any]] = []
+        seen: dict[str, str] = {}
 
         for provider in self.active():
             for schema in provider.get_tool_schemas():
@@ -287,8 +288,8 @@ class MemoryProviderRegistry:
 
         return schemas
 
-    async def handle_tool_call(self, name: str, arguments: Dict[str, Any]) -> Any:
-        provider_by_tool: Dict[str, MemoryProvider] = {}
+    async def handle_tool_call(self, name: str, arguments: dict[str, Any]) -> Any:
+        provider_by_tool: dict[str, MemoryProvider] = {}
         for provider in self.active():
             for schema in provider.get_tool_schemas():
                 tool_name = self._tool_name(schema)
@@ -306,7 +307,7 @@ class MemoryProviderRegistry:
         raise KeyError(f"No active memory provider exposes tool {name}")
 
     @staticmethod
-    def _tool_name(schema: Dict[str, Any]) -> str:
+    def _tool_name(schema: dict[str, Any]) -> str:
         if not isinstance(schema, dict):
             raise ValueError("Memory provider tool schema must be a dict")
         name = schema.get("name")

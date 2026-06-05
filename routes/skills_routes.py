@@ -23,17 +23,17 @@ logger = logging.getLogger(__name__)
 
 class SkillAddRequest(BaseModel):
     # New schema (preferred)
-    name: Optional[str] = Field(None, max_length=80)
-    description: Optional[str] = Field(None, max_length=200)
+    name: str | None = Field(None, max_length=80)
+    description: str | None = Field(None, max_length=200)
     category: str = Field("general", max_length=40)
-    tags: List[str] = Field(default_factory=list)
-    platforms: List[str] = Field(default_factory=list)
-    requires_toolsets: List[str] = Field(default_factory=list)
-    fallback_for_toolsets: List[str] = Field(default_factory=list)
-    when_to_use: Optional[str] = Field(None, max_length=2000)
-    procedure: List[str] = Field(default_factory=list)
-    pitfalls: List[str] = Field(default_factory=list)
-    verification: List[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    platforms: list[str] = Field(default_factory=list)
+    requires_toolsets: list[str] = Field(default_factory=list)
+    fallback_for_toolsets: list[str] = Field(default_factory=list)
+    when_to_use: str | None = Field(None, max_length=2000)
+    procedure: list[str] = Field(default_factory=list)
+    pitfalls: list[str] = Field(default_factory=list)
+    verification: list[str] = Field(default_factory=list)
     status: str = "draft"
     version: str = "1.0.0"
     confidence: float = 0.8
@@ -41,37 +41,37 @@ class SkillAddRequest(BaseModel):
     # them from auto-dedup and cap-eviction in add_skill. (The agent's own
     # skill writes go through do_manage_skills with source="learned".)
     source: str = "user"
-    teacher_model: Optional[str] = None
-    session_id: Optional[str] = None
+    teacher_model: str | None = None
+    session_id: str | None = None
 
     # Old schema (back-compat)
-    title: Optional[str] = Field(None, max_length=200)
-    problem: Optional[str] = Field(None, max_length=2000)
-    solution: Optional[str] = Field(None, max_length=5000)
-    steps: List[str] = Field(default_factory=list)
+    title: str | None = Field(None, max_length=200)
+    problem: str | None = Field(None, max_length=2000)
+    solution: str | None = Field(None, max_length=5000)
+    steps: list[str] = Field(default_factory=list)
 
 
 class SkillUpdateRequest(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    tags: Optional[List[str]] = None
-    platforms: Optional[List[str]] = None
-    requires_toolsets: Optional[List[str]] = None
-    fallback_for_toolsets: Optional[List[str]] = None
-    when_to_use: Optional[str] = None
-    procedure: Optional[List[str]] = None
-    pitfalls: Optional[List[str]] = None
-    verification: Optional[List[str]] = None
-    status: Optional[str] = None
-    version: Optional[str] = None
-    confidence: Optional[float] = None
-    body_extra: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
+    category: str | None = None
+    tags: list[str] | None = None
+    platforms: list[str] | None = None
+    requires_toolsets: list[str] | None = None
+    fallback_for_toolsets: list[str] | None = None
+    when_to_use: str | None = None
+    procedure: list[str] | None = None
+    pitfalls: list[str] | None = None
+    verification: list[str] | None = None
+    status: str | None = None
+    version: str | None = None
+    confidence: float | None = None
+    body_extra: str | None = None
     # Old shape
-    title: Optional[str] = None
-    problem: Optional[str] = None
-    solution: Optional[str] = None
-    steps: Optional[List[str]] = None
+    title: str | None = None
+    problem: str | None = None
+    solution: str | None = None
+    steps: list[str] | None = None
 
 
 def _skill_test_task(skill: dict) -> str:
@@ -92,7 +92,7 @@ def _skill_test_task(skill: dict) -> str:
 
 
 async def _eval_skill_run(skill_md: str, task: str, transcript: str,
-                          url: str, model: str, headers: Optional[dict]) -> dict:
+                          url: str, model: str, headers: dict | None) -> dict:
     """LLM-as-judge: grade a skill test run from its transcript. Advisory only.
 
     Robust against local reasoning models (strips <think>, lenient JSON,
@@ -246,7 +246,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
 
 
 async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: str,
-                                headers: Optional[dict]) -> Optional[dict]:
+                                headers: dict | None) -> dict | None:
     """Advisory judge: is this skill worth keeping, or is it redundant / trivially
     unnecessary? Sees the OTHER skills' names+descriptions so it can spot
     duplicates. Returns {necessary, redundant_with, reason} or None. Never acts —
@@ -327,7 +327,7 @@ def _should_check_retrieval_precision(skill: dict) -> bool:
 
 async def _eval_skill_retrieval_precision(skill_md: str, others: list,
                                           url: str, model: str,
-                                          headers: Optional[dict]) -> Optional[dict]:
+                                          headers: dict | None) -> dict | None:
     """Advisory judge: would this skill's metadata make retrieval over-select it?
 
     This is distinct from "does the procedure work?". It asks whether tags,
@@ -503,7 +503,7 @@ def _audit_auto_publish_policy(owner) -> tuple[bool, float]:
     return enabled, max(0.0, min(1.0, min_conf))
 
 
-def _skill_duplicate_blocker(skills_manager, name: str, owner) -> Optional[str]:
+def _skill_duplicate_blocker(skills_manager, name: str, owner) -> str | None:
     """Cheap duplicate guard matching the UI's duplicate grouping.
 
     The LLM necessity check catches semantic redundancy, but the UI also has a
@@ -587,8 +587,8 @@ def _audit_flag_text(*parts) -> str:
     return " ".join(text_parts).lower()
 
 
-def _audit_generic_blocker(skill: Optional[dict], necessity: Optional[dict],
-                           verdict_data: Optional[dict]) -> Optional[str]:
+def _audit_generic_blocker(skill: dict | None, necessity: dict | None,
+                           verdict_data: dict | None) -> str | None:
     """Return a short reason when a generic/trivial skill must stay draft."""
     generic_re = re.compile(
         r"\b(too[-\s]?generic|generic|trivial|capable assistant|without a saved|"
@@ -616,8 +616,8 @@ def _audit_generic_blocker(skill: Optional[dict], necessity: Optional[dict],
 
 
 def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
-                           confidence: Optional[float], necessity: Optional[dict] = None,
-                           verdict_data: Optional[dict] = None) -> str:
+                           confidence: float | None, necessity: dict | None = None,
+                           verdict_data: dict | None = None) -> str:
     """Apply the user's audit publishing policy.
 
     Audit is the final pass: skills that pass at/above the threshold are
@@ -1023,7 +1023,7 @@ def _resolve_audit_models(owner=None):
 
 
 async def run_scheduled_skill_audit(skills_manager: SkillsManager,
-                                    owner: Optional[str] = None,
+                                    owner: str | None = None,
                                     max_skills: int = 8) -> dict:
     """Nightly audit pass. Audits the LEAST-recently-audited skills first and
     caps the batch so it rotates through the library over successive nights
@@ -1068,10 +1068,10 @@ async def run_scheduled_skill_audit(skills_manager: SkillsManager,
 def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     router = APIRouter(prefix="/api/skills", tags=["skills"])
 
-    def _owner(request: Request) -> Optional[str]:
+    def _owner(request: Request) -> str | None:
         return get_current_user(request)
 
-    def _verify_owner(skill: dict, user: Optional[str]):
+    def _verify_owner(skill: dict, user: str | None):
         if user is None:
             return
         # SECURITY: strict check — previously `sk_owner and sk_owner != user`
@@ -1081,7 +1081,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         if skill.get("owner") != user:
             raise HTTPException(404, "Skill not found")
 
-    def _fire_skill_added(user: Optional[str]):
+    def _fire_skill_added(user: str | None):
         try:
             from src.event_bus import fire_event
             fire_event("skill_added", user)
@@ -1147,7 +1147,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         try:
             from src.agent_loop import TOOL_SECTIONS, get_builtin_overrides
         except Exception as e:
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         default = None
         for key, raw in TOOL_SECTIONS.items():
             names = key if isinstance(key, tuple) else (key,)
@@ -1371,7 +1371,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         try:
             url, model, headers, teacher = _resolve_audit_models(owner=user)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
 
         skills = skills_manager.load(owner=user)
         by_name = {s.get("name"): s for s in skills if s.get("name")}
@@ -1460,7 +1460,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         try:
             sk = Skill.from_markdown(new_content)
         except Exception as e:
-            raise HTTPException(400, f"Could not parse SKILL.md: {e}")
+            raise HTTPException(400, f"Could not parse SKILL.md: {e}") from e
         # Never rename on save: a changed `name` in the markdown would move
         # the skill dir (update_skill) and orphan the original id, so a later
         # delete 404s (#1333). Pin to the stored name, like _apply_skill_md.
@@ -1505,7 +1505,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             raise HTTPException(404, "Skill not found")
         _verify_owner(match, user)
 
-        updates = body.dict(exclude_none=True)
+        updates = body.model_dump(exclude_none=True)
         if not updates:
             return {"ok": True}
         ok = skills_manager.update_skill(match.get("name"), updates, owner=user)

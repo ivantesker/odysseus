@@ -8,7 +8,7 @@ import socket
 import time as _time
 import logging
 import httpx
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List, Dict, Any, Optional
 from urllib.parse import urlparse, urlunparse
 from fastapi import APIRouter, HTTPException, Form, Query, Body, Request, Response
@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
-from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
+from src.llm_core import _detect_provider, _host_match
 from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
@@ -402,7 +402,7 @@ def _manual_refresh_timeout(ep: Any, category: str, requested: Any = None) -> fl
     return float(max(stored or 30, 30))
 
 
-def _parse_model_list(raw: Any) -> List[str]:
+def _parse_model_list(raw: Any) -> list[str]:
     """Return a sanitized list of model ids from JSON/list/comma text."""
     if raw is None:
         return []
@@ -432,7 +432,7 @@ def _parse_model_list(raw: Any) -> List[str]:
     return out
 
 
-def _parse_positive_int(raw: Any, *, minimum: int = 1, maximum: int = 86400) -> Optional[int]:
+def _parse_positive_int(raw: Any, *, minimum: int = 1, maximum: int = 86400) -> int | None:
     try:
         val = int(str(raw).strip())
     except Exception:
@@ -454,7 +454,7 @@ def _explicit_model_list_timeout(base_url: str, endpoint_kind: str = "auto", req
     return 3.0 if _is_ollama_base(base_url) else 2.0
 
 
-def _cached_model_ids(ep: Any) -> List[str]:
+def _cached_model_ids(ep: Any) -> list[str]:
     return _parse_model_list(getattr(ep, "cached_models", None))
 
 
@@ -512,15 +512,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
     # Simple tool definition to test tool support
     _test_tools = [{"type": "function", "function": {"name": "test", "description": "Test tool", "parameters": {"type": "object", "properties": {}}}}] if with_tools else None
 
-    if provider == "anthropic":
-        from src.llm_core import _normalize_anthropic_url, _build_anthropic_headers, _build_anthropic_payload
-        target_url = _normalize_anthropic_url(base)
-        auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        h = _build_anthropic_headers(auth_headers)
-        payload = _build_anthropic_payload(model_id, messages, 0.0, 5)
-        if _test_tools:
-            payload["tools"] = [{"name": "test", "description": "Test tool", "input_schema": {"type": "object", "properties": {}}}]
-    elif provider == "ollama":
+    if provider == "ollama":
         from src.llm_core import _build_ollama_payload
         target_url = build_chat_url(base)
         h = build_headers(api_key, base)
@@ -613,36 +605,10 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 
 
 
-def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
-    """Probe a base URL's /models endpoint and return list of model IDs.
-    For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> list[str]:
+    """Probe a base URL's /models endpoint and return list of model IDs."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
-    if _detect_provider(base) == "anthropic":
-        # Try Anthropic's /v1/models endpoint first
-        url = build_models_url(base)
-        headers = {"anthropic-version": "2023-06-01"}
-        if api_key:
-            headers["x-api-key"] = api_key
-        try:
-            r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
-            r.raise_for_status()
-            data = r.json()
-            models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-            if models:
-                return models
-        except httpx.HTTPStatusError as e:
-            if api_key:
-                status = e.response.status_code if e.response is not None else "unknown"
-                logger.warning(f"Anthropic /v1/models failed with API key: HTTP {status}")
-                return []
-            logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
-        except Exception as e:
-            if api_key:
-                logger.warning(f"Anthropic /v1/models failed with API key: {e}")
-                return []
-            logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
-        return list(ANTHROPIC_MODELS)
     url = build_models_url(base)
     headers = build_headers(api_key, base)
     try:
@@ -698,7 +664,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     return []
 
 
-def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
+def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
@@ -713,7 +679,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         or "ollama" in (parsed_base.hostname or "").lower()
     )
 
-    def _result_from_response(r) -> Dict[str, Any]:
+    def _result_from_response(r) -> dict[str, Any]:
         if 300 <= r.status_code < 400:
             loc = r.headers.get("location", "")
             if loc.startswith("/login") or "/login" in loc:
@@ -731,7 +697,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
             }
         return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
 
-    last_error: Optional[str] = None
+    last_error: str | None = None
 
     try:
         if looks_like_ollama:
@@ -762,7 +728,7 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
 
 
 
-def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) -> str:
+def _model_endpoint_error_message(base_url: str, ping: dict[str, Any] = None) -> str:
     """Return a provider-aware error message for failed endpoint probes."""
     ping = ping or {}
     error = ping.get("error")
@@ -871,12 +837,12 @@ def setup_model_routes(model_discovery):
     # Track model-list refreshes by URL+key. This prevents repeated picker/API
     # opens from starting duplicate /models probes, and gives slow/offline
     # providers a cooldown after failures.
-    _refresh_state: Dict[str, Dict[str, Any]] = {}
+    _refresh_state: dict[str, dict[str, Any]] = {}
     _refresh_inflight = {"v": False}  # coarse single-flight guard
     _REFRESH_FAILURE_BASE = 300.0
     _REFRESH_FAILURE_MAX = 3600.0
 
-    def _refresh_key(base: str, api_key: Optional[str]) -> str:
+    def _refresh_key(base: str, api_key: str | None) -> str:
         return f"{base.rstrip('/')}\x00{api_key or ''}"
 
     def _ts(value: Any) -> float:
@@ -890,7 +856,7 @@ def setup_model_routes(model_discovery):
             return 0.0
         return min(_REFRESH_FAILURE_BASE * (2 ** max(0, fails - 1)), _REFRESH_FAILURE_MAX)
 
-    def _should_refresh_endpoint(ep: Any, now: float, force: bool = False) -> tuple[bool, Dict[str, Any]]:
+    def _should_refresh_endpoint(ep: Any, now: float, force: bool = False) -> tuple[bool, dict[str, Any]]:
         base = _normalize_base(getattr(ep, "base_url", "") or "")
         kind = _effective_endpoint_kind(ep, base)
         category = _classify_endpoint(base, kind)
@@ -946,7 +912,7 @@ def setup_model_routes(model_discovery):
                 try:
                     endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
                     now = _time.time()
-                    groups: Dict[str, Dict[str, Any]] = {}
+                    groups: dict[str, dict[str, Any]] = {}
                     for ep in endpoints:
                         ok, info = _should_refresh_endpoint(ep, now, force=force)
                         if not ok:
@@ -963,7 +929,7 @@ def setup_model_routes(model_discovery):
                         st["inflight"] = True
                         st["last_attempt"] = now
 
-                    def _probe_one(key: str, data: Dict[str, Any]):
+                    def _probe_one(key: str, data: dict[str, Any]):
                         try:
                             ids = _probe_endpoint(data["base"], data.get("api_key"), timeout=data.get("timeout") or 2)
                             return key, data["endpoint_ids"], ids, None
@@ -1133,7 +1099,7 @@ def setup_model_routes(model_discovery):
     # short enough that a freshly-killed local server shows as offline
     # within ~8s of the user noticing.
     _LOCAL_PROBE_TTL = 8.0
-    _local_probe_cache: Dict[str, Any] = {"data": None, "time": 0.0}
+    _local_probe_cache: dict[str, Any] = {"data": None, "time": 0.0}
 
     @router.get("/model-endpoints/probe-local")
     async def probe_local_endpoints(request: Request):
@@ -1160,12 +1126,12 @@ def setup_model_routes(model_discovery):
         finally:
             db.close()
 
-        grouped: Dict[str, Dict[str, Any]] = {}
+        grouped: dict[str, dict[str, Any]] = {}
         for ep_id, base, api_key in local_eps:
             key = _refresh_key(base, api_key)
             grouped.setdefault(key, {"base": base, "api_key": api_key, "endpoint_ids": []})["endpoint_ids"].append(ep_id)
 
-        async def _probe_one(data: Dict[str, Any]) -> Dict[str, Any]:
+        async def _probe_one(data: dict[str, Any]) -> dict[str, Any]:
             t0 = _time.time()
             try:
                 import asyncio as _asyncio
@@ -1185,7 +1151,7 @@ def setup_model_routes(model_discovery):
             *[_probe_one(data) for data in grouped.values()],
             return_exceptions=False,
         )
-        results: Dict[str, Any] = {}
+        results: dict[str, Any] = {}
         for data, r in zip(grouped.values(), results_list):
             for eid in data["endpoint_ids"]:
                 results[eid] = r
@@ -1224,7 +1190,7 @@ def setup_model_routes(model_discovery):
                 entry["latency_ms"] = round((_time.time() - t0) * 1000)
                 entry["status"] = "online" if ping.get("reachable") or cached_count else "offline"
                 entry["error"] = ping.get("error")
-                entry["model_count"] = cached_count or (len(ANTHROPIC_MODELS) if provider == "anthropic" else 0)
+                entry["model_count"] = cached_count or 0
             except Exception as e:
                 entry["latency_ms"] = None
                 entry["status"] = "online" if cached_count else "offline"
@@ -1280,7 +1246,7 @@ def setup_model_routes(model_discovery):
             db.close()
 
     @router.get("/probe")
-    def probe_models(request: Request, endpoint_id: Optional[str] = Query(None)):
+    def probe_models(request: Request, endpoint_id: str | None = Query(None)):
         """Probe individual models with a tiny completion request. Streams SSE results."""
         require_admin(request)
         db = SessionLocal()
@@ -1371,7 +1337,7 @@ def setup_model_routes(model_discovery):
     # ---- Admin: model endpoints CRUD ----
 
     @router.get("/model-endpoints")
-    def list_model_endpoints(request: Request) -> List[Dict[str, Any]]:
+    def list_model_endpoints(request: Request) -> list[dict[str, Any]]:
         require_admin(request)
         db = SessionLocal()
         try:
@@ -1695,7 +1661,7 @@ def setup_model_routes(model_discovery):
         request: Request,
         response: Response,
         refresh: bool = False,
-        refresh_timeout: Optional[int] = Query(None, ge=1, le=60),
+        refresh_timeout: int | None = Query(None, ge=1, le=60),
     ):
         """List all discovered models for an endpoint with hidden/visible state."""
         require_admin(request)
@@ -1883,7 +1849,7 @@ def setup_model_routes(model_discovery):
     async def toggle_model_endpoint(ep_id: str, request: Request):
         require_admin(request)
         # Optional JSON body for field-targeted updates. No body → toggle is_enabled (legacy behaviour).
-        body: Dict[str, Any] = {}
+        body: dict[str, Any] = {}
         try:
             if int(request.headers.get("content-length") or 0) > 0:
                 body = await request.json()
@@ -2008,7 +1974,7 @@ def setup_model_routes(model_discovery):
         for row in rows:
             if _session_uses_endpoint_url(row.endpoint_url or "", base_url):
                 row.headers = {}
-                row.updated_at = datetime.utcnow()
+                row.updated_at = datetime.now(UTC).replace(tzinfo=None)
                 cleared += 1
         return cleared
 

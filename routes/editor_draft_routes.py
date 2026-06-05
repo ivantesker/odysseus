@@ -31,29 +31,29 @@ logger = logging.getLogger(__name__)
 
 
 class DraftCreate(BaseModel):
-    name: Optional[str] = None
-    source_image_id: Optional[str] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-    payload: Dict[str, Any]
-    thumbnail: Optional[str] = None
+    name: str | None = None
+    source_image_id: str | None = None
+    width: int | None = None
+    height: int | None = None
+    payload: dict[str, Any]
+    thumbnail: str | None = None
 
 
 class DraftUpdate(BaseModel):
-    name: Optional[str] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-    payload: Optional[Dict[str, Any]] = None
-    thumbnail: Optional[str] = None
+    name: str | None = None
+    width: int | None = None
+    height: int | None = None
+    payload: dict[str, Any] | None = None
+    thumbnail: str | None = None
 
 
-def _owns(d: EditorDraft, user: Optional[str]) -> bool:
+def _owns(d: EditorDraft, user: str | None) -> bool:
     if user is None:
         return True
     return (d.owner or None) == user
 
 
-def _summary(d: EditorDraft) -> Dict[str, Any]:
+def _summary(d: EditorDraft) -> dict[str, Any]:
     """List-view representation — omits the bulky payload."""
     return {
         "id": d.id,
@@ -67,7 +67,7 @@ def _summary(d: EditorDraft) -> Dict[str, Any]:
     }
 
 
-def _load_payload(raw: Optional[str]) -> Dict[str, Any]:
+def _load_payload(raw: str | None) -> dict[str, Any]:
     try:
         payload = json.loads(raw) if raw else {}
     except Exception:
@@ -79,7 +79,7 @@ def setup_editor_draft_routes() -> APIRouter:
     router = APIRouter(tags=["editor-drafts"])
 
     @router.get("/api/editor-drafts")
-    async def list_drafts(request: Request) -> Dict[str, List[Dict[str, Any]]]:
+    async def list_drafts(request: Request) -> dict[str, list[dict[str, Any]]]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -92,7 +92,7 @@ def setup_editor_draft_routes() -> APIRouter:
             db.close()
 
     @router.get("/api/editor-drafts/{draft_id}")
-    async def get_draft(request: Request, draft_id: str) -> Dict[str, Any]:
+    async def get_draft(request: Request, draft_id: str) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -109,7 +109,7 @@ def setup_editor_draft_routes() -> APIRouter:
             db.close()
 
     @router.post("/api/editor-drafts")
-    async def create_draft(request: Request, body: DraftCreate) -> Dict[str, Any]:
+    async def create_draft(request: Request, body: DraftCreate) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -130,12 +130,12 @@ def setup_editor_draft_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.warning(f"editor-draft create failed: {e}")
-            raise HTTPException(500, "Could not save draft")
+            raise HTTPException(500, "Could not save draft") from e
         finally:
             db.close()
 
     @router.put("/api/editor-drafts/{draft_id}")
-    async def update_draft(request: Request, draft_id: str, body: DraftUpdate) -> Dict[str, Any]:
+    async def update_draft(request: Request, draft_id: str, body: DraftUpdate) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -162,12 +162,12 @@ def setup_editor_draft_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.warning(f"editor-draft update failed: {e}")
-            raise HTTPException(500, "Could not update draft")
+            raise HTTPException(500, "Could not update draft") from e
         finally:
             db.close()
 
     @router.delete("/api/editor-drafts/{draft_id}")
-    async def delete_draft(request: Request, draft_id: str) -> Dict[str, str]:
+    async def delete_draft(request: Request, draft_id: str) -> dict[str, str]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -181,7 +181,7 @@ def setup_editor_draft_routes() -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 

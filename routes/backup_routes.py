@@ -67,7 +67,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         try:
             body = await request.json()
         except Exception:
-            raise HTTPException(400, "Invalid JSON")
+            raise HTTPException(400, "Invalid JSON") from None
 
         if not isinstance(body, dict):
             raise HTTPException(400, "Expected a JSON object")

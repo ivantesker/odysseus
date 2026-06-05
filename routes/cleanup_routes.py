@@ -33,7 +33,7 @@ def setup_cleanup_routes(session_manager):
             return preview
         except Exception as e:
             logger.error(f"Cleanup preview failed: {e}")
-            raise HTTPException(500, "Cleanup preview generation failed")
+            raise HTTPException(500, "Cleanup preview generation failed") from e
 
     @router.post("")
     async def cleanup_endpoint(request: Request):
@@ -55,6 +55,6 @@ def setup_cleanup_routes(session_manager):
             }
         except Exception as e:
             logger.error(f"Cleanup failed: {e}")
-            raise HTTPException(500, "Cleanup operation failed")
+            raise HTTPException(500, "Cleanup operation failed") from e
 
     return router

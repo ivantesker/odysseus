@@ -7,7 +7,7 @@ scheduler without needing an LLM call.
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
@@ -37,7 +37,7 @@ class TaskDeferred(BaseException):
         self.delay_seconds = delay_seconds
 
 
-async def action_tidy_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_tidy_sessions(owner: str, **kwargs) -> tuple[str, bool]:
     """Delete empty sessions for the owner. Pure heuristic —
     the LLM folder-sort phase is skipped (user opted to keep this task
     LLM-free; sorting can be triggered manually via the Chats UI)."""
@@ -49,7 +49,7 @@ async def action_tidy_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
             timeout=60,
         )
         return result, True
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("tidy_sessions action timed out")
         return "Chat session tidy timed out", False
     except Exception as e:
@@ -57,7 +57,7 @@ async def action_tidy_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_tidy_documents(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_tidy_documents(owner: str, **kwargs) -> tuple[str, bool]:
     """Run tidy on documents for the owner."""
     try:
         from src.document_actions import run_document_tidy
@@ -68,7 +68,7 @@ async def action_tidy_documents(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_consolidate_memory(owner: str, **kwargs) -> tuple[str, bool]:
     """Consolidate/deduplicate memories for the owner."""
     try:
         import json
@@ -283,7 +283,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
 # Registry: action name -> async function(owner, **kwargs) -> (result_str, success_bool)
 
 
-async def _run_subprocess(argv, *, shell: bool = False, timeout: int = 120, label: str = "Command") -> Tuple[str, bool]:
+async def _run_subprocess(argv, *, shell: bool = False, timeout: int = 120, label: str = "Command") -> tuple[str, bool]:
     """Shared subprocess runner. Wraps the blocking subprocess.run in
     asyncio.to_thread so the event loop stays responsive."""
     import asyncio
@@ -302,7 +302,7 @@ async def _run_subprocess(argv, *, shell: bool = False, timeout: int = 120, labe
         return str(e), False
 
 
-async def action_ssh_command(owner: str, command: str = "", host: str = "localhost", **kwargs) -> Tuple[str, bool]:
+async def action_ssh_command(owner: str, command: str = "", host: str = "localhost", **kwargs) -> tuple[str, bool]:
     """Run a shell command locally or on a remote host via SSH."""
     if not command:
         return "No command specified", False
@@ -318,7 +318,7 @@ async def action_ssh_command(owner: str, command: str = "", host: str = "localho
     )
 
 
-async def action_run_script(owner: str, script: str = "", host: str = "", **kwargs) -> Tuple[str, bool]:
+async def action_run_script(owner: str, script: str = "", host: str = "", **kwargs) -> tuple[str, bool]:
     """Run a script locally, or via SSH when a host is configured."""
     if not script:
         return "No script specified", False
@@ -330,7 +330,7 @@ async def action_run_script(owner: str, script: str = "", host: str = "", **kwar
     return await _run_subprocess(["ssh", target_host, script], timeout=300, label="Script")
 
 
-async def action_run_local(owner: str, script: str = "", **kwargs) -> Tuple[str, bool]:
+async def action_run_local(owner: str, script: str = "", **kwargs) -> tuple[str, bool]:
     """Run a script locally (no SSH)."""
     if not script:
         return "No script specified", False
@@ -339,7 +339,7 @@ async def action_run_local(owner: str, script: str = "", **kwargs) -> Tuple[str,
     return await _run_subprocess(script, shell=True, timeout=300, label="Script")
 
 
-async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_tidy_research(owner: str, **kwargs) -> tuple[str, bool]:
     """Remove only broken research files (empty or unparseable JSON).
 
     Research history lives entirely in data/deep_research/<id>.json and is NOT
@@ -370,7 +370,7 @@ async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_tidy_calendar(owner: str, **kwargs) -> tuple[str, bool]:
     """Find duplicate calendar events (same title + start time) and DELETE the dups,
     keeping the oldest (first-seen) instance.
 
@@ -448,7 +448,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
                 if newest is not None:
                     STATE_FILE.write_text(json.dumps({
                         "last_created_at": newest.isoformat(),
-                        "last_run_at": datetime.utcnow().isoformat(),
+                        "last_run_at": datetime.now(UTC).replace(tzinfo=None).isoformat(),
                         "scanned": len(events),
                         "removed": len(removed),
                     }, indent=2), encoding="utf-8")
@@ -492,7 +492,7 @@ def _result_has_work(result: str | None) -> bool:
     return True
 
 
-async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_summarize_emails(owner: str, **kwargs) -> tuple[str, bool]:
     """Run one pass of email summary background processing."""
     try:
         from routes.email_pollers import _run_auto_summarize_once
@@ -505,7 +505,7 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_draft_email_replies(owner: str, **kwargs) -> tuple[str, bool]:
     """Run one pass of AI reply drafting."""
     try:
         from routes.email_pollers import _run_auto_summarize_once
@@ -570,7 +570,7 @@ def _classify_event_heuristic(summary: str) -> tuple:
     return etype, None
 
 
-async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_classify_events(owner: str, **kwargs) -> tuple[str, bool]:
     """Hybrid classification of upcoming calendar events: fast heuristic for
     obvious cases, LLM fallback for ambiguous ones. Assigns event_type +
     importance + color. Re-classifies anything not already set."""
@@ -583,7 +583,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
 
         db = SessionLocal()
         try:
-            now = datetime.utcnow()
+            now = datetime.now(UTC).replace(tzinfo=None)
             horizon = now + timedelta(days=30)
             events = db.query(CalendarEvent).filter(
                 CalendarEvent.dtstart >= now,
@@ -734,12 +734,12 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_ping_events(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_ping_events(owner: str, **kwargs) -> tuple[str, bool]:
     """Calendar event reminders are now dispatched by Notes."""
     raise TaskNoop("calendar event reminders are handled by Notes")
 
 
-async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_extract_email_events(owner: str, **kwargs) -> tuple[str, bool]:
     """Scan recent emails for booking confirmations / meetings / events
     and auto-add them to the calendar."""
     import asyncio as _aio
@@ -756,7 +756,7 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
             if not _result_has_work(result):
                 raise TaskNoop(f"email→calendar: {result or 'no new emails'}")
             return f"{result} (3d window)", True
-        except _aio.TimeoutError:
+        except TimeoutError:
             return "Email→calendar pass exceeded 5 min budget — try fewer emails or a faster model", False
     except Exception as e:
         logger.error(f"extract_email_events action failed: {e}")
@@ -775,7 +775,7 @@ _SIG_SKIP_PREFIXES = (
 )
 
 
-async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_learn_sender_signatures(owner: str, **kwargs) -> tuple[str, bool]:
     """For each sender with ≥3 recent inbox emails, ask the LLM to extract
     the common signature block across their messages. The cached sig is
     served on the `/read` endpoint so the renderer can fold signatures
@@ -974,7 +974,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         return str(e), False
 
 
-async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_daily_brief(owner: str, **kwargs) -> tuple[str, bool]:
     """Build a short morning digest: today's calendar events, unread email count
     + top-N senders/subjects, active todos."""
     try:
@@ -1103,7 +1103,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_test_skills(owner: str, **kwargs) -> tuple[str, bool]:
     """Run the per-skill Test on every skill: agent runs the procedure in a
     sandbox, LLM judges the transcript, verdict is recorded on the skill.
     ADVISORY ONLY — only writes set_audit (never rewrites SKILL.md, never
@@ -1215,7 +1215,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_audit_skills(owner: str, **kwargs) -> tuple[str, bool]:
     """Run the real skills audit pipeline for skills that have not been audited.
 
     Unlike test_skills, this uses the same audit logic as the UI Audit all flow:
@@ -1284,7 +1284,7 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_ping_notes(owner: str, **kwargs) -> tuple[str, bool]:
     """Background note-due scanner. Fires a reminder for any note whose
     `due_date` falls in the current ±5-minute window and hasn't been pinged
     within the last 25 minutes. Mirrors `action_ping_events` for calendar.
@@ -1326,12 +1326,12 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
             try:
                 # Handle the JS-style 'Z' suffix.
                 if s.endswith("Z"):
-                    return _dt.fromisoformat(s[:-1]).replace(tzinfo=_tz.utc)
+                    return _dt.fromisoformat(s[:-1]).replace(tzinfo=UTC)
                 # Naive → assume local server time.
                 d = _dt.fromisoformat(s)
                 if d.tzinfo is None:
-                    d = d.astimezone().astimezone(_tz.utc)
-                return d.astimezone(_tz.utc)
+                    d = d.astimezone().astimezone(UTC)
+                return d.astimezone(UTC)
             except Exception:
                 return None
 
@@ -1351,7 +1351,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
             if not notes:
                 raise TaskNoop("no notes with due dates")
 
-            now = _dt.now(_tz.utc)
+            now = _dt.now(UTC)
             window = _td(seconds=WINDOW_SEC)
             reping_cutoff = now - _td(minutes=REPING_MIN)
             seen_ids = set()
@@ -1373,7 +1373,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                             last = last.get("at")
                         last_dt = _dt.fromisoformat(str(last))
                         if last_dt.tzinfo is None:
-                            last_dt = last_dt.replace(tzinfo=_tz.utc)
+                            last_dt = last_dt.replace(tzinfo=UTC)
                         if last_dt >= reping_cutoff:
                             continue
                     except Exception:
@@ -1431,7 +1431,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
-async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
+async def action_check_email_urgency(owner: str, **kwargs) -> tuple[str, bool]:
     """Scan unread emails across all accounts, LLM-triage new ones, cache
     per-UID verdicts, tag the inbox, and fire a reminder when a previously
     unseen UID scores reply-soon/urgent (>=2). State persists under
@@ -2007,7 +2007,7 @@ async def action_cookbook_serve(
     progress_cb=None,
     command: str = "",
     **kwargs,
-) -> Tuple[str, bool]:
+) -> tuple[str, bool]:
     """Launch a Cookbook model serve as a scheduled task.
 
     `command` is the JSON config string the task carries in `prompt`,

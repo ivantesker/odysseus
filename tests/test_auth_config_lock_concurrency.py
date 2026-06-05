@@ -81,7 +81,7 @@ class TestConcurrentDeleteUser:
 
         assert all(results)
         assert len(mgr.users) == 1
-        with open(mgr.auth_path, "r") as f:
+        with open(mgr.auth_path, encoding="utf-8") as f:
             data = json.load(f)
         assert len(data["users"]) == 1
         assert "admin" in data["users"]
@@ -153,7 +153,7 @@ class TestConcurrentMixedOperations:
         for i in range(20):
             assert f"newuser{i}" in mgr.users
 
-        with open(mgr.auth_path, "r") as f:
+        with open(mgr.auth_path, encoding="utf-8") as f:
             data = json.load(f)
         assert set(data["users"].keys()) == set(mgr.users.keys())
 
@@ -171,7 +171,7 @@ class TestDiskConsistency:
         def reader():
             while not stop_event.is_set():
                 try:
-                    with open(mgr.auth_path, "r") as f:
+                    with open(mgr.auth_path, encoding="utf-8") as f:
                         content = f.read()
                     json.loads(content)
                 except json.JSONDecodeError as e:

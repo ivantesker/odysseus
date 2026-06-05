@@ -5,7 +5,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Optional
 
@@ -168,7 +168,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         try:
             owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
         except Exception:
-            raise HTTPException(404, "Research not found")
+            raise HTTPException(404, "Research not found") from None
         if owner != user:
             raise HTTPException(404, "Research not found")
 
@@ -183,7 +183,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             html_content = research_handler.get_report_html(session_id)
         except Exception as e:
             logger.error(f"Visual report generation error: {e}", exc_info=True)
-            raise HTTPException(500, f"Report generation failed: {e}")
+            raise HTTPException(500, f"Report generation failed: {e}") from e
         if html_content is None:
             logger.warning(f"No report data found for session {session_id}")
             raise HTTPException(404, "No visual report available for this session")
@@ -218,7 +218,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.get("/api/research/library")
     async def research_library(
         request: Request,
-        search: Optional[str] = Query(None),
+        search: str | None = Query(None),
         sort: str = Query("recent"),
         limit: int = Query(50),
         archived: bool = Query(False),
@@ -281,7 +281,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
-            raise HTTPException(500, f"Failed to read research: {e}")
+            raise HTTPException(500, f"Failed to read research: {e}") from e
         # SECURITY: 404 (not 403) so we don't leak that the report exists.
         if data.get("owner") != user:
             raise HTTPException(404, "Research not found")
@@ -304,7 +304,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(500, f"Failed to update research: {e}")
+            raise HTTPException(500, f"Failed to update research: {e}") from e
         return {"ok": True, "id": session_id, "archived": bool(archived)}
 
     @router.delete("/api/research/{session_id}")
@@ -324,7 +324,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             except HTTPException:
                 raise
             except Exception:
-                raise HTTPException(404, "Research not found")
+                raise HTTPException(404, "Research not found") from None
             json_path.unlink()
             deleted = True
         return {"deleted": deleted}
@@ -337,13 +337,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         query: str
         # max_rounds=0 means "Auto" — let the AI decide when to stop, capped at 20.
         max_rounds: int = Field(default=0, ge=0, le=20)
-        search_provider: Optional[str] = None
-        endpoint_id: Optional[str] = None
-        model: Optional[str] = None
+        search_provider: str | None = None
+        endpoint_id: str | None = None
+        model: str | None = None
         max_time: int = Field(default=300, ge=60, le=1800)
-        extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
-        extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
-        category: Optional[str] = None
+        extraction_timeout: int | None = Field(default=None, ge=15, le=3600)
+        extraction_concurrency: int | None = Field(default=None, ge=1, le=12)
+        category: str | None = None
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -633,7 +633,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         # The user can open the visual report for source details; keeping sources
         # out of the chat context saves tokens and avoids the AI fabricating
         # citations.
-        date_str = datetime.utcnow().strftime("%Y-%m-%d")
+        date_str = datetime.now(UTC).replace(tzinfo=None).strftime("%Y-%m-%d")
         primer = (
             f"[Research context — {date_str}]\n\n"
             f"The user previously ran a deep research investigation. Use the "

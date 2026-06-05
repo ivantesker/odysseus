@@ -30,7 +30,7 @@ def _normalize_base_for_compare(url: str) -> str:
     return url
 
 
-def _configured_endpoint_kind(url: str) -> Optional[str]:
+def _configured_endpoint_kind(url: str) -> str | None:
     """Return configured endpoint kind for a chat/base URL when available."""
     target = _normalize_base_for_compare(url)
     if not target:
@@ -208,7 +208,7 @@ KNOWN_CONTEXT_WINDOWS = {
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
-_context_cache: Dict[Tuple[str, str], int] = {}
+_context_cache: dict[tuple[str, str], int] = {}
 
 
 def get_context_length(endpoint_url: str, model: str) -> int:
@@ -238,7 +238,7 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     return ctx
 
 
-def _lookup_known(model: str) -> Optional[int]:
+def _lookup_known(model: str) -> int | None:
     """Check known context windows by substring match.
 
     Picks the LONGEST matching key so a short key never shadows a more specific
@@ -248,8 +248,8 @@ def _lookup_known(model: str) -> Optional[int]:
     name = model.lower()
     basename = name.split("/")[-1] if "/" in name else name
     basename = basename.split(":")[0]  # strip :free, :extended etc.
-    best_key: Optional[str] = None
-    best_ctx: Optional[int] = None
+    best_key: str | None = None
+    best_ctx: int | None = None
     for key, ctx in KNOWN_CONTEXT_WINDOWS.items():
         if key in basename or key in name:
             if best_key is None or len(key) > len(best_key):
@@ -286,16 +286,6 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
                         return n_ctx
         except Exception:
             pass
-
-    # GitHub Copilot's /models requires auth + X-GitHub-Api-Version headers that
-    # aren't available here; an unauthenticated probe just 400s. All Copilot
-    # picker models are major API models covered by the known-context table, so
-    # rely on that instead of a doomed network call.
-    from src.copilot import is_copilot_base
-    if is_copilot_base(endpoint_url):
-        if known:
-            logger.info(f"Using known context window for {model}: {known}")
-        return known or DEFAULT_CONTEXT
 
     models_url = endpoint_url.replace("/chat/completions", "/models")
     try:
@@ -352,7 +342,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     return DEFAULT_CONTEXT
 
 
-def estimate_tokens(messages: List[Dict]) -> int:
+def estimate_tokens(messages: list[dict]) -> int:
     """Rough token estimate for a list of messages.
 
     Uses chars * 0.3 which is closer to real BPE tokenizer output
