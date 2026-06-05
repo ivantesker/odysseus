@@ -142,14 +142,6 @@ def normalize_base(url: str) -> str:
     return url
 
 
-def _anthropic_api_root(base: str) -> str:
-    """Return Anthropic's API root, preserving /v1 for OpenAI-compatible APIs elsewhere."""
-    base = (base or "").strip().rstrip("/")
-    if _host_match(base, "anthropic.com") and base.endswith("/v1"):
-        return base[:-3].rstrip("/")
-    return base
-
-
 def _ollama_api_root(base: str) -> str:
     """Return the native Ollama API root, adding /api for ollama.com hosts."""
     base = (base or "").strip().rstrip("/")
@@ -167,8 +159,6 @@ def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
-    if provider == "anthropic":
-        return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
         return _ollama_api_root(base) + "/chat"
     return base + "/chat/completions"
@@ -178,8 +168,6 @@ def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
-    if provider == "anthropic":
-        return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama":
         return _ollama_api_root(base) + "/tags"
     return base + "/models"
@@ -187,21 +175,9 @@ def build_models_url(base: str) -> str:
 
 def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     """Build auth headers for an endpoint."""
-    provider = _detect_provider(base)
     headers: Dict[str, str] = {}
-    if provider == "anthropic":
-        if api_key:
-            headers["x-api-key"] = api_key
-        headers["anthropic-version"] = "2023-06-01"
-        return headers
-    if provider == "copilot":
-        from src.copilot import copilot_headers
-        return copilot_headers(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    if provider == "openrouter":
-        headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
-        headers.setdefault("X-OpenRouter-Title", "Odysseus")
     return headers
 
 

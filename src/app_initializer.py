@@ -6,7 +6,7 @@ from typing import Dict, Any
 
 from src.constants import (
     DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR,
-    SESSIONS_FILE, DEFAULT_HOST, OPENAI_API_KEY
+    SESSIONS_FILE, DEFAULT_HOST
 )
 from src.memory import MemoryManager
 from src.memory_provider import MemoryProviderRegistry, NativeMemoryProvider
@@ -93,7 +93,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     )
     
     # Initialize model discovery
-    model_discovery = ModelDiscovery(DEFAULT_HOST, OPENAI_API_KEY)
+    model_discovery = ModelDiscovery(DEFAULT_HOST)
     
     # Load and apply saved API keys
     saved_keys = api_key_manager.load()

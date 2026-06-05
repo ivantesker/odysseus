@@ -294,33 +294,6 @@ class TestProbeSingleModel:
         assert result["status"] == "fail"
         assert "refused" in result["error"]
 
-    def test_routes_anthropic_messages_with_x_api_key(self, monkeypatch):
-        _patch_resolve(monkeypatch)
-        captured = {}
-
-        def fake_post(url, headers=None, json=None, timeout=None):
-            captured.update(url=url, headers=headers, payload=json)
-            return _resp(200, json={"content": [{"type": "text", "text": "OK"}]})
-
-        monkeypatch.setattr(model_routes.httpx, "post", fake_post)
-        result = _probe_single_model("https://api.anthropic.com/v1", "sk-ant", "claude-sonnet-4-5")
-        assert result["status"] == "ok"
-        assert captured["url"] == "https://api.anthropic.com/v1/messages"
-        assert captured["headers"].get("x-api-key") == "sk-ant"
-        assert captured["payload"]["model"] == "claude-sonnet-4-5"
-
-    def test_with_tools_sends_anthropic_tool_schema(self, monkeypatch):
-        _patch_resolve(monkeypatch)
-        captured = {}
-
-        def fake_post(url, headers=None, json=None, timeout=None):
-            captured["payload"] = json
-            return _resp(200, json={"content": []})
-
-        monkeypatch.setattr(model_routes.httpx, "post", fake_post)
-        _probe_single_model("https://api.anthropic.com/v1", "sk-ant", "claude-sonnet-4-5", with_tools=True)
-        assert "input_schema" in captured["payload"]["tools"][0]
-
 
 # ── _classify_endpoint: Tailscale CGNAT range ──
 

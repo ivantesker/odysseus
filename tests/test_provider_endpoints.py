@@ -37,13 +37,6 @@ PROVIDER_CASES = [
     ("openai", "https://api.openai.com/v1",
      "https://api.openai.com/v1/chat/completions",
      "https://api.openai.com/v1/models"),
-    ("anthropic", "https://api.anthropic.com",
-     "https://api.anthropic.com/v1/messages",
-     "https://api.anthropic.com/v1/models"),
-    # Anthropic base that already carries /v1 must not become /v1/v1/messages.
-    ("anthropic_v1", "https://api.anthropic.com/v1",
-     "https://api.anthropic.com/v1/messages",
-     "https://api.anthropic.com/v1/models"),
     ("openrouter", "https://openrouter.ai/api/v1",
      "https://openrouter.ai/api/v1/chat/completions",
      "https://openrouter.ai/api/v1/models"),
@@ -85,48 +78,18 @@ def test_build_models_url(no_dns, base, expected):
     assert er.build_models_url(base) == expected
 
 
-def test_chat_url_never_double_prefixes_anthropic(no_dns):
-    """Regression guard: the /v1 collapse must not produce /v1/v1/messages."""
-    url = er.build_chat_url("https://api.anthropic.com/v1")
-    assert "/v1/v1/" not in url
-    assert url.count("/v1/messages") == 1
-
-
-# ── Auth headers per provider ──
-
-def test_headers_anthropic_uses_x_api_key():
-    h = er.build_headers("secret", "https://api.anthropic.com")
-    assert h["x-api-key"] == "secret"
-    assert h["anthropic-version"] == "2023-06-01"
-    assert "Authorization" not in h
-
-
-def test_headers_anthropic_without_key_still_sends_version():
-    h = er.build_headers(None, "https://api.anthropic.com")
-    assert h["anthropic-version"] == "2023-06-01"
-    assert "x-api-key" not in h
-
+# ── Auth headers ──
 
 @pytest.mark.parametrize("base", [
     "https://api.openai.com/v1",
-    "https://api.x.ai/v1",
-    "https://api.deepseek.com",
-    "https://api.groq.com/openai/v1",
-    "https://generativelanguage.googleapis.com/v1beta/openai",
+    "http://localhost:11434/v1",
+    "http://localhost:8000/v1",
 ])
 def test_headers_openai_style_use_bearer(base):
     h = er.build_headers("secret", base)
     assert h["Authorization"] == "Bearer secret"
     assert "HTTP-Referer" not in h
     assert "x-api-key" not in h
-
-
-def test_headers_openrouter_adds_attribution():
-    h = er.build_headers("secret", "https://openrouter.ai/api/v1")
-    assert h["Authorization"] == "Bearer secret"
-    # OpenRouter ranks/labels apps via these headers.
-    assert h["HTTP-Referer"].startswith("https://github.com/")
-    assert h["X-OpenRouter-Title"] == "Odysseus"
 
 
 def test_headers_omit_authorization_when_no_key():
@@ -170,16 +133,6 @@ def test_first_chat_model_empty(models):
 
 
 # ── provider-root helpers ──
-
-@pytest.mark.parametrize("base,expected", [
-    ("https://api.anthropic.com/v1", "https://api.anthropic.com"),
-    ("https://api.anthropic.com", "https://api.anthropic.com"),
-    # /v1 on a non-Anthropic host (OpenAI-compatible) must be preserved.
-    ("https://api.openai.com/v1", "https://api.openai.com/v1"),
-])
-def test_anthropic_api_root(base, expected):
-    assert er._anthropic_api_root(base) == expected
-
 
 @pytest.mark.parametrize("base,expected", [
     ("https://ollama.com", "https://ollama.com/api"),

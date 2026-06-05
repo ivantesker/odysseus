@@ -69,7 +69,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
     """
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.llm_core import _detect_provider
     from src.auth_helpers import owner_filter
 
     spec = spec.strip()
@@ -100,16 +100,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
             provider = _detect_provider(base)
             headers = build_headers(ep.api_key, base)
 
-            if provider == "anthropic":
-                # Anthropic: match against hardcoded model list
-                matched = None
-                for am in ANTHROPIC_MODELS:
-                    if model_name.lower() in am.lower() or am.lower() in model_name.lower():
-                        matched = am
-                        break
-                if matched:
-                    return build_chat_url(base), matched, headers
-            else:
+            if True:
                 # OpenAI-compatible and native Ollama: probe the provider's model list.
                 try:
                     r = httpx.get(build_models_url(base), headers=headers, timeout=5)
@@ -1101,7 +1092,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
     """
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.llm_core import _detect_provider
     from src.auth_helpers import owner_filter
 
     keyword = content.strip().lower() if content.strip() else None
@@ -1124,9 +1115,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
             headers = build_headers(ep.api_key, base)
 
             model_ids = []
-            if provider == "anthropic":
-                model_ids = list(ANTHROPIC_MODELS)
-            else:
+            if True:
                 try:
                     r = httpx.get(build_models_url(base), headers=headers, timeout=5)
                     r.raise_for_status()

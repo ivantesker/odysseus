@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
-from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
+from src.llm_core import _detect_provider, _host_match
 from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
@@ -512,15 +512,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
     # Simple tool definition to test tool support
     _test_tools = [{"type": "function", "function": {"name": "test", "description": "Test tool", "parameters": {"type": "object", "properties": {}}}}] if with_tools else None
 
-    if provider == "anthropic":
-        from src.llm_core import _normalize_anthropic_url, _build_anthropic_headers, _build_anthropic_payload
-        target_url = _normalize_anthropic_url(base)
-        auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        h = _build_anthropic_headers(auth_headers)
-        payload = _build_anthropic_payload(model_id, messages, 0.0, 5)
-        if _test_tools:
-            payload["tools"] = [{"name": "test", "description": "Test tool", "input_schema": {"type": "object", "properties": {}}}]
-    elif provider == "ollama":
+    if provider == "ollama":
         from src.llm_core import _build_ollama_payload
         target_url = build_chat_url(base)
         h = build_headers(api_key, base)
@@ -614,35 +606,9 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 
 
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
-    """Probe a base URL's /models endpoint and return list of model IDs.
-    For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    """Probe a base URL's /models endpoint and return list of model IDs."""
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
-    if _detect_provider(base) == "anthropic":
-        # Try Anthropic's /v1/models endpoint first
-        url = build_models_url(base)
-        headers = {"anthropic-version": "2023-06-01"}
-        if api_key:
-            headers["x-api-key"] = api_key
-        try:
-            r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
-            r.raise_for_status()
-            data = r.json()
-            models = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
-            if models:
-                return models
-        except httpx.HTTPStatusError as e:
-            if api_key:
-                status = e.response.status_code if e.response is not None else "unknown"
-                logger.warning(f"Anthropic /v1/models failed with API key: HTTP {status}")
-                return []
-            logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
-        except Exception as e:
-            if api_key:
-                logger.warning(f"Anthropic /v1/models failed with API key: {e}")
-                return []
-            logger.warning(f"Anthropic /v1/models failed, using hardcoded list: {e}")
-        return list(ANTHROPIC_MODELS)
     url = build_models_url(base)
     headers = build_headers(api_key, base)
     try:
@@ -1224,7 +1190,7 @@ def setup_model_routes(model_discovery):
                 entry["latency_ms"] = round((_time.time() - t0) * 1000)
                 entry["status"] = "online" if ping.get("reachable") or cached_count else "offline"
                 entry["error"] = ping.get("error")
-                entry["model_count"] = cached_count or (len(ANTHROPIC_MODELS) if provider == "anthropic" else 0)
+                entry["model_count"] = cached_count or 0
             except Exception as e:
                 entry["latency_ms"] = None
                 entry["status"] = "online" if cached_count else "offline"

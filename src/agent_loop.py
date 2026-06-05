@@ -464,15 +464,8 @@ _cached_base_prompt_key = None
 # especially — often fail to follow the fenced-block convention and emit raw
 # JSON, which the agent then can't parse as a tool call.
 _API_HOSTS = frozenset([
-    "api.openai.com", "api.anthropic.com",
-    "openrouter.ai", "api.groq.com",
-    "api.mistral.ai", "api.cohere.com",
-    "api.deepseek.com", "deepseek.com",
-    "api.together.xyz", "api.fireworks.ai",
-    "api.perplexity.ai", "api.x.ai",
-    "ollama.com", "api.venice.ai",
-    "api.githubcopilot.com",
-    # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
+    "ollama.com",
+    # Local OpenAI-compatible endpoints (llama.cpp, vLLM, Ollama /v1, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
     # schemas and the agent silently degrades to fenced-block parsing.
