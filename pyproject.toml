@@ -1,6 +1,10 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# A per-test timeout so one test making a real network call (or otherwise
+# blocking) can't hang the whole suite — it fails that test and moves on.
+# thread method works for sync and threaded blocking on all platforms.
+addopts = "--timeout=60 --timeout-method=thread"
 
 [tool.ruff]
 line-length = 88

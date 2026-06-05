@@ -736,8 +736,18 @@ from src.plugin_registry import load_plugins, registered_routers
 _n_plugins = load_plugins()
 for _plugin_router in registered_routers():
     app.include_router(_plugin_router)
-if _n_plugins:
-    logging.getLogger(__name__).info("Loaded %d plugin module(s)", _n_plugins)
+
+# Startup summary — one line an operator can grep to see how this instance is
+# configured (version, auth, headless mode, plugins) without digging through
+# settings. Complements /api/v1/capabilities for non-HTTP visibility.
+try:
+    from core.constants import APP_VERSION as _APP_VERSION
+    logging.getLogger(__name__).info(
+        "Odysseus %s ready — auth=%s web_ui=%s plugins=%d",
+        _APP_VERSION, AUTH_ENABLED, SERVE_WEB_UI, _n_plugins,
+    )
+except Exception:
+    pass
 
 # ========= ROUTES (kept in app.py) =========
 

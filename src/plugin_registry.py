@@ -98,14 +98,22 @@ def load_plugins(package: str = "plugins") -> int:
     except ModuleNotFoundError:
         return 0
     count = 0
+    loaded = []
     for mod in pkgutil.iter_modules(pkg.__path__):
         if mod.name.startswith("_"):
             continue
         try:
             importlib.import_module(f"{package}.{mod.name}")
             count += 1
+            loaded.append(mod.name)
+            logger.debug("Loaded plugin %s.%s", package, mod.name)
         except Exception as e:
             logger.warning("Skipping plugin %s.%s: %s", package, mod.name, e)
+    if loaded:
+        logger.info(
+            "Plugins loaded from %s: %s (tools=%d, actions=%d, routes=%d)",
+            package, ", ".join(loaded), len(_TOOLS), len(_ACTIONS), len(_ROUTERS),
+        )
     return count
 
 

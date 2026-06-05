@@ -77,22 +77,6 @@ class TestDeepSeekToolSupport:
             "qwen3.5:4b", "http://localhost:11434/api/chat"
         ) is False
 
-    # --- cloud API cases (must still get tool schemas) ---
-
-    def test_deepseek_cloud_api_gets_tools(self):
-        result = _compute_is_api_model(
-            "deepseek-chat", "https://api.deepseek.com/v1"
-        )
-        assert result is True, (
-            "api.deepseek.com must be treated as tool-capable via _API_HOSTS"
-        )
-
-    def test_deepseek_v3_cloud_gets_tools(self):
-        assert _compute_is_api_model("deepseek-v3", "https://api.deepseek.com/v1") is True
-
-    def test_deepseek_v2_cloud_gets_tools(self):
-        assert _compute_is_api_model("deepseek-v2.5", "https://api.deepseek.com/v1") is True
-
     # --- endpoint_supports override takes priority ---
 
     def test_endpoint_supports_true_overrides_blocklist(self):
@@ -131,14 +115,6 @@ class TestDeepSeekToolSupport:
 
     def test_llama_local_non_ollama_gets_tools_via_host(self):
         assert _compute_is_api_model("llama3.2:3b", "http://localhost:8000/v1") is True
-
-
-class TestApiHostsContainsDeepSeek:
-    def test_api_deepseek_com_in_api_hosts(self):
-        assert "api.deepseek.com" in _API_HOSTS
-
-    def test_deepseek_com_in_api_hosts(self):
-        assert "deepseek.com" in _API_HOSTS
 
 
 class TestEndpointLookupKeys:

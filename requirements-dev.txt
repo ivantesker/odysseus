@@ -5,3 +5,4 @@
 #   pip install -r requirements-dev.txt
 ruff==0.8.4
 mypy==1.13.0
+pytest-timeout==2.4.0
