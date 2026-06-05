@@ -7,6 +7,7 @@ Provides token estimation for context usage tracking.
 
 import logging
 import sys
+import time
 from typing import Dict, List, Optional, Tuple
 
 from urllib.parse import urlparse
@@ -209,13 +210,22 @@ KNOWN_CONTEXT_WINDOWS = {
 # Cache
 # ---------------------------------------------------------------------------
 _context_cache: dict[tuple[str, str], int] = {}
+# Local endpoints get a short-TTL cache instead of the permanent one: their real
+# window can change across a server restart (--max-model-len / a re-pulled
+# Ollama model), so we re-check periodically — but NOT on every turn. Before
+# this, every chat/agent turn made a live /v1/models (or /api/show) round-trip
+# to the local server just to size num_ctx and the compaction gate, adding a
+# network hop to each generation. 60s keeps it fresh while removing that hop.
+_LOCAL_CTX_TTL = 60.0
+_local_context_cache: dict[tuple[str, str], tuple[int, float]] = {}
 
 
 def get_context_length(endpoint_url: str, model: str) -> int:
     """Get the context window size for a model.
 
     Queries /v1/models on the endpoint and looks for context_length
-    or context_window fields. Caches result per (endpoint, model).
+    or context_window fields. Caches result per (endpoint, model) — permanently
+    for remote endpoints, with a short TTL for local ones.
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
     configured_kind = _configured_endpoint_kind(endpoint_url)
@@ -225,14 +235,20 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603).
     cache_key = (endpoint_url, model)
-    if not is_local and cache_key in _context_cache:
+    now = time.monotonic()
+    if is_local:
+        hit = _local_context_cache.get(cache_key)
+        if hit is not None and hit[1] > now:
+            return hit[0]
+    elif cache_key in _context_cache:
         return _context_cache[cache_key]
 
     ctx = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request.
-    # Local endpoints can restart with a different --max-model-len while keeping
-    # the same model id, so always re-query them instead of serving stale cache.
-    if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
+    if is_local:
+        if ctx != DEFAULT_CONTEXT:
+            _local_context_cache[cache_key] = (ctx, now + _LOCAL_CTX_TTL)
+    elif ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy"):
         _context_cache[cache_key] = ctx
     logger.info(f"Context length for {model}: {ctx}")
     return ctx
