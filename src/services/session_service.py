@@ -234,6 +234,165 @@ def inject_messages(session_manager, sid: str, messages: list[dict]) -> int:
     return len(messages)
 
 
+# Names that mark a throwaway/test chat (exact, lowercased).
+_THROWAWAY_NAMES = {
+    "test", "testing", "asdf", "asd", "hello", "hi", "hey",
+    "yo", "sup", "hola", "hii", "hiii", "heyo",
+    "foo", "bar", "baz", "tmp", "temp", "scratch", "untitled",
+    "new chat", "delete", "remove", "junk", "trash", "xxx",
+    "abc", "qwerty", "blah", "stuff", "whatever", "idk",
+    "ok", "lol", "bruh", "hmm", "hm", "meh",
+}
+_THROWAWAY_MAX_MESSAGES = 4
+
+
+def cleanup_junk_sessions(session_manager, owner: str) -> tuple[int, int, dict]:
+    """Phase 1 of auto-sort: delete empty/throwaway/incognito chats.
+
+    Returns (deleted_empty, deleted_throwaway, folder_map) where folder_map is
+    {session_id: folder} for the surviving rows. Pure DB + manager logic.
+    """
+    from sqlalchemy import func as _sa_func
+
+    from core.database import ChatMessage as DbMsg
+
+    db = SessionLocal()
+    deleted_empty = 0
+    deleted_throwaway = 0
+    try:
+        rows = db.query(DbSession).filter(
+            DbSession.archived == False, DbSession.owner == owner
+        ).all()
+        folder_map = {r.id: r.folder for r in rows}
+        counts = dict(
+            db.query(DbMsg.session_id, _sa_func.count(DbMsg.id)).group_by(DbMsg.session_id).all()
+        )
+        asst_counts = dict(
+            db.query(DbMsg.session_id, _sa_func.count(DbMsg.id))
+            .filter(DbMsg.role == "assistant").group_by(DbMsg.session_id).all()
+        )
+        for row in rows:
+            if getattr(row, "is_important", False):
+                continue
+            if (row.name or "").strip() == "Incognito":
+                deleted_throwaway += 1
+                db.delete(row)
+                if hasattr(session_manager, "delete_session"):
+                    session_manager.delete_session(row.id)
+                continue
+            msg_count = counts.get(row.id, 0)
+            should_delete = False
+            if msg_count == 0:
+                should_delete = True
+                deleted_empty += 1
+            elif msg_count <= _THROWAWAY_MAX_MESSAGES:
+                name = (row.name or "").strip().lower()
+                first_msg = db.query(DbMsg.content).filter(
+                    DbMsg.session_id == row.id, DbMsg.role == "user"
+                ).order_by(DbMsg.timestamp).first()
+                first_text = (first_msg[0] or "").strip().lower() if first_msg else ""
+                assistant_count = asst_counts.get(row.id, 0)
+                if name in _THROWAWAY_NAMES or name.startswith("chat:") or first_text in _THROWAWAY_NAMES:
+                    should_delete = True
+                    deleted_throwaway += 1
+                elif msg_count == 1 and assistant_count == 0:
+                    should_delete = True
+                    deleted_throwaway += 1
+                elif msg_count <= 2 and first_text and len(first_text.split()) <= 3 and len(first_text) <= 40:
+                    should_delete = True
+                    deleted_throwaway += 1
+            if should_delete:
+                db.delete(row)
+                if hasattr(session_manager, "delete_session"):
+                    session_manager.delete_session(row.id)
+        if deleted_empty or deleted_throwaway:
+            db.commit()
+            logger.info("Auto-sort: deleted %d empty + %d throwaway sessions",
+                        deleted_empty, deleted_throwaway)
+        return deleted_empty, deleted_throwaway, folder_map
+    finally:
+        db.close()
+
+
+def _loads_lenient(s: str):
+    """Parse JSON, retrying once with trailing commas stripped."""
+    import json
+    if not s:
+        return None
+    for cand in (s, _re.sub(r",(\s*[}\]])", r"\1", s)):
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def parse_folder_response(raw: str, session_list: list[dict]) -> tuple[dict, dict]:
+    """Parse the LLM's folder JSON and resolve id-prefixes to full ids.
+
+    Returns (folders, assignments) where folders is {name: [ids]} and
+    assignments is {full_session_id: folder_name}. Raises ValueError if no JSON
+    can be recovered from the model output.
+    """
+    text = (raw or "").strip()
+    # Drop reasoning-model <think> blocks (their braces derail the scan).
+    text = _re.sub(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>", "", text, flags=_re.I).strip()
+
+    result = _loads_lenient(text)
+    if result is None:
+        fence = _re.search(r"```(?:json)?\s*\n?([\s\S]*?)```", text)
+        if fence:
+            result = _loads_lenient(fence.group(1).strip())
+    if result is None:
+        start, end = text.find("{"), text.rfind("}")
+        if start >= 0 and end > start:
+            result = _loads_lenient(text[start:end + 1])
+    if result is None:
+        raise ValueError("could not parse folder JSON from model output")
+
+    folders = result.get("folders", {}) or {}
+    id_prefix_map = {s["id"][:8]: s["id"] for s in session_list}
+    full_ids = set(id_prefix_map.values())
+    assignments: dict = {}
+    for folder_name, ids in folders.items():
+        for sid_or_prefix in ids:
+            full_id = None
+            if sid_or_prefix in full_ids:
+                full_id = sid_or_prefix
+            else:
+                prefix = sid_or_prefix.rstrip(".").rstrip(" ")
+                if prefix in id_prefix_map:
+                    full_id = id_prefix_map[prefix]
+                else:
+                    for p, fid in id_prefix_map.items():
+                        if fid.startswith(prefix) or prefix.startswith(p):
+                            full_id = fid
+                            break
+            if full_id:
+                assignments[full_id] = folder_name
+    return folders, assignments
+
+
+def apply_folder_assignments(owner: str, assignments: dict) -> int:
+    """Persist {session_id: folder} for the owner's sessions. Returns count."""
+    db = SessionLocal()
+    try:
+        updated = 0
+        for sid, folder_name in assignments.items():
+            row = db.query(DbSession).filter(DbSession.id == sid, DbSession.owner == owner).first()
+            if row:
+                row.folder = folder_name
+                row.updated_at = _naive_utc_now()
+                updated += 1
+        db.commit()
+        return updated
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 _ARCHIVED_SORT_KEYS = ("recent", "oldest", "most-messages", "alpha")
 
 
