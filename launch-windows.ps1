@@ -110,7 +110,12 @@ if (-not (Test-Path $venvPy)) {
 }
 
 # 3. Install / update dependencies
+# pip auto-reads the Windows system proxy from the registry. If that proxy is a
+# SOCKS proxy (e.g. socks=127.0.0.1:10808 from a VPN client) pip fails with
+# "Missing dependencies for SOCKS support" unless PySocks is installed. PyPI is
+# reachable directly, so bypass the proxy for pip with NO_PROXY.
 Write-Step "Installing dependencies (first run can take a few minutes)"
+$env:NO_PROXY = "*"
 & $venvPy -m pip install --upgrade pip --quiet
 & $venvPy -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
