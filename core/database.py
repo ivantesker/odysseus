@@ -51,6 +51,17 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     if isinstance(dbapi_connection, sqlite3.Connection):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        # WAL lets readers run concurrently with a single writer, instead of the
+        # default DELETE journal where every write takes an exclusive lock that
+        # blocks all readers. The app's background pollers, scheduler, and chat
+        # writes all share one SQLite file, so a write would otherwise stall
+        # reads (history, settings, rate-limit checks). busy_timeout makes a
+        # contended connection wait and retry for up to 5s instead of raising
+        # "database is locked" immediately; synchronous=NORMAL is the safe,
+        # recommended durability level under WAL.
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
 
