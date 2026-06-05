@@ -11,7 +11,9 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
+from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user, effective_user
+from src.services import session_service
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -621,112 +623,34 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         """Archive a session, keeping its data but removing it from active sessions."""
         _verify_session_owner(request, sid)
         try:
-            # First check if session exists
-            session_manager.get_session(sid)
-
-            # Archive the session
-            db = SessionLocal()
-            try:
-                db_session = db.query(DbSession).filter(DbSession.id == sid).first()
-                if db_session:
-                    db_session.archived = True
-                    db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
-                    db.commit()
-
-                    # Update in memory if it exists
-                    if sid in session_manager.sessions:
-                        session_manager.sessions[sid].archived = True
-
-                    logger.info(f"Archived session {sid}")
-                    return {"status": "archived"}
-                else:
-                    raise HTTPException(404, f"Session {sid} not found")
-
-            except HTTPException:
-                raise
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Error archiving session {sid}: {e}")
-                raise HTTPException(500, "Failed to archive session") from e
-            finally:
-                db.close()
-
-        except KeyError:
-            raise HTTPException(404, f"Session '{sid}' not found") from None
+            return session_service.archive_session(session_manager, sid)
+        except SessionNotFoundError:
+            raise HTTPException(404, f"Session {sid} not found") from None
+        except Exception as e:
+            logger.error(f"Error archiving session {sid}: {e}")
+            raise HTTPException(500, "Failed to archive session") from e
 
     @router.post("/session/{sid}/unarchive")
     def unarchive_session(request: Request, sid: str):
         """Restore an archived session back to the active session list."""
         _verify_session_owner(request, sid)
-        db = SessionLocal()
         try:
-            db_session = db.query(DbSession).filter(DbSession.id == sid).first()
-            if not db_session:
-                raise HTTPException(404, f"Session {sid} not found")
-            db_session.archived = False
-            db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
-            db.commit()
-            # Reload into session manager so it appears in the active list
-            try:
-                if sid in session_manager.sessions:
-                    session_manager.sessions[sid].archived = False
-                else:
-                    session_manager._load_session_from_db(sid)
-            except Exception:
-                pass  # Non-fatal — session will load on next access
-            return {"status": "unarchived"}
-        except HTTPException:
-            raise
+            return session_service.unarchive_session(session_manager, sid)
+        except SessionNotFoundError:
+            raise HTTPException(404, f"Session {sid} not found") from None
         except Exception as e:
-            db.rollback()
             logger.error(f"Error unarchiving session {sid}: {e}")
             raise HTTPException(500, "Failed to unarchive session") from e
-        finally:
-            db.close()
 
     @router.get("/sessions/archived")
     def list_archived_sessions(request: Request, search: str = "", offset: int = 0, limit: int = 20, sort: str = "recent", model: str = ""):
         """List archived sessions for the archive browser."""
         user = effective_user(request)
-        db = SessionLocal()
-        try:
-            q = db.query(DbSession).filter(DbSession.archived == True)
-            if not user:
-                raise HTTPException(403, "Authentication required")
-            q = q.filter(DbSession.owner == user)
-            if search:
-                safe_search = search.replace('%', r'\%').replace('_', r'\_')
-                q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))
-            if model:
-                # Contains match (mirrors the name filter above). The old
-                # f"%{model}" was a SUFFIX-only match, so filtering by "gpt-4"
-                # dropped "gpt-4o" and over-matched on shared suffixes; it also
-                # left LIKE wildcards in the user value unescaped.
-                safe_model = model.replace('%', r'\%').replace('_', r'\_')
-                q = q.filter(DbSession.model.ilike(f"%{safe_model}%", escape='\\'))
-            total = q.count()
-            sort_map = {
-                "recent": DbSession.updated_at.desc(),
-                "oldest": DbSession.updated_at.asc(),
-                "most-messages": DbSession.message_count.desc().nulls_last(),
-                "alpha": DbSession.name.asc(),
-            }
-            order = sort_map.get(sort, DbSession.updated_at.desc())
-            rows = q.order_by(order).offset(offset).limit(limit).all()
-            sessions = []
-            for s in rows:
-                sessions.append({
-                    "id": s.id,
-                    "name": s.name,
-                    "model": s.model,
-                    "message_count": s.message_count or 0,
-                    "created_at": s.created_at.isoformat() if s.created_at else None,
-                    "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-                    "is_important": s.is_important,
-                })
-            return {"sessions": sessions, "total": total}
-        finally:
-            db.close()
+        if not user:
+            raise HTTPException(403, "Authentication required")
+        return session_service.list_archived_sessions(
+            user, search=search, offset=offset, limit=limit, sort=sort, model=model
+        )
 
     @router.get("/history/{sid}")
     def get_history(request: Request, sid: str):
