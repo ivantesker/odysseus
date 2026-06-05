@@ -187,7 +187,12 @@ class TestGetContextLength:
     def setup_method(self):
         model_context._context_cache.clear()
 
-    def test_local_endpoint_requeries_same_model_after_restart(self, monkeypatch):
+    def test_local_endpoint_caches_with_ttl_then_requeries(self, monkeypatch):
+        # Local endpoints are cached with a short TTL: repeated turns reuse the
+        # value (no per-turn network hop), but once the entry expires (e.g. the
+        # server restarted with a different --max-model-len) the next call
+        # re-queries and picks up the new window.
+        model_context._local_context_cache.clear()
         calls = []
 
         def fake_query(endpoint_url, model):
@@ -201,9 +206,17 @@ class TestGetContextLength:
 
         first = model_context.get_context_length(endpoint, model)
         second = model_context.get_context_length(endpoint, model)
-
+        # Second call within TTL is served from cache — only one query so far.
         assert first == 8192
-        assert second == 27000
+        assert second == 8192
+        assert len(calls) == 1
+
+        # Force the entry to expire, then the next call re-queries.
+        key = (endpoint, model)
+        ctx, _ = model_context._local_context_cache[key]
+        model_context._local_context_cache[key] = (ctx, 0.0)
+        third = model_context.get_context_length(endpoint, model)
+        assert third == 27000
         assert len(calls) == 2
 
     def test_remote_endpoint_keeps_cached_context(self, monkeypatch):
