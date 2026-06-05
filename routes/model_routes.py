@@ -1161,32 +1161,39 @@ def setup_model_routes(model_discovery):
         return results
 
     @router.get("/ping")
-    def ping_endpoints(request: Request):
-        """Probe all enabled endpoints and return status + latency."""
+    async def ping_endpoints(request: Request):
+        """Probe all enabled endpoints and return status + latency.
+
+        Async + per-endpoint asyncio.to_thread so the blocking httpx ping runs
+        off the event loop AND all endpoints are pinged concurrently — one
+        offline endpoint no longer freezes the whole request (or the loop) for
+        its full timeout, and N endpoints take one timeout, not N.
+        """
         require_admin(request)
         db = SessionLocal()
         try:
             endpoints = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+            # Capture everything the ping needs while the session is open.
+            prepared = []
+            for ep in endpoints:
+                base = _normalize_base(ep.base_url)
+                kind = _effective_endpoint_kind(ep, base)
+                entry = {
+                    "id": ep.id,
+                    "name": ep.name,
+                    "base_url": base,
+                    "provider": _detect_provider(base),
+                    "category": _classify_endpoint(base, kind),
+                    "endpoint_kind": kind,
+                }
+                prepared.append((entry, base, ep.api_key, len(_cached_model_ids(ep))))
         finally:
             db.close()
 
-        results = []
-        for ep in endpoints:
-            base = _normalize_base(ep.base_url)
-            provider = _detect_provider(base)
-            kind = _effective_endpoint_kind(ep, base)
-            cached_count = len(_cached_model_ids(ep))
-            entry = {
-                "id": ep.id,
-                "name": ep.name,
-                "base_url": base,
-                "provider": provider,
-                "category": _classify_endpoint(base, kind),
-                "endpoint_kind": kind,
-            }
+        async def _do_ping(entry, base, api_key, cached_count):
             try:
                 t0 = _time.time()
-                ping = _ping_endpoint(base, ep.api_key, timeout=1.5)
+                ping = await _asyncio.to_thread(_ping_endpoint, base, api_key, 1.5)
                 entry["latency_ms"] = round((_time.time() - t0) * 1000)
                 entry["status"] = "online" if ping.get("reachable") or cached_count else "offline"
                 entry["error"] = ping.get("error")
@@ -1196,9 +1203,10 @@ def setup_model_routes(model_discovery):
                 entry["status"] = "online" if cached_count else "offline"
                 entry["error"] = str(e)
                 entry["model_count"] = cached_count
-            results.append(entry)
+            return entry
 
-        return {"endpoints": results}
+        results = await _asyncio.gather(*[_do_ping(*p) for p in prepared])
+        return {"endpoints": list(results)}
 
     @router.post("/probe-selected")
     def probe_selected(request: Request, request_body: dict = Body(...)):
@@ -1337,7 +1345,7 @@ def setup_model_routes(model_discovery):
     # ---- Admin: model endpoints CRUD ----
 
     @router.get("/model-endpoints")
-    def list_model_endpoints(request: Request) -> list[dict[str, Any]]:
+    async def list_model_endpoints(request: Request) -> list[dict[str, Any]]:
         require_admin(request)
         db = SessionLocal()
         try:
@@ -1353,7 +1361,7 @@ def setup_model_routes(model_discovery):
                 status = "online" if (all_models or pinned) else "offline"
                 ping = None
                 if not all_models and not pinned and r.is_enabled:
-                    ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
+                    ping = await _asyncio.to_thread(_ping_endpoint, r.base_url, r.api_key, 1.0)
                     if ping.get("reachable"):
                         status = "empty"
                 base = _normalize_base(r.base_url)
