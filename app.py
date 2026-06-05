@@ -170,6 +170,7 @@ if AUTH_ENABLED:
         "/api/auth/integrations/presets",
         "/api/health",
         "/api/version",
+        "/api/v1/capabilities",
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
@@ -365,6 +366,12 @@ else:
 # ========= STATIC FILES =========
 os.makedirs(STATIC_DIR, exist_ok=True)
 
+# When false, the core runs headless: the JSON API stays up but the bundled web
+# UI (static assets + SPA HTML routes) is not served. Lets a deploy front the
+# API with a different client (mobile companion, TUI, third-party) without
+# shipping the web bundle. The API itself is always available.
+SERVE_WEB_UI = os.getenv("SERVE_WEB_UI", "true").strip().lower() not in ("0", "false", "no", "off")
+
 
 class _RevalidatingStatic(StaticFiles):
     """Serve static assets normally, but force the browser to REVALIDATE
@@ -382,7 +389,8 @@ class _RevalidatingStatic(StaticFiles):
         return resp
 
 
-app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
+if SERVE_WEB_UI:
+    app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
 
 # ========= GENERATED IMAGES =========
 @app.get("/api/generated-image/{filename}")
@@ -717,6 +725,10 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# Capabilities discovery — lets any UI adapt to what this instance offers.
+from routes.capabilities_routes import setup_capabilities_routes
+app.include_router(setup_capabilities_routes(model_discovery))
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
@@ -729,6 +741,8 @@ def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
 
 @app.get("/")
 async def serve_index(request: Request):
+    if not SERVE_WEB_UI:
+        raise HTTPException(404, "Web UI disabled (SERVE_WEB_UI=false); API is at /api")
     static_path = abs_join(BASE_DIR, "static/index.html")
     if os.path.exists(static_path):
         return _serve_html_with_nonce(request, static_path)
@@ -776,10 +790,14 @@ async def serve_library(request: Request):
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
+    if not SERVE_WEB_UI:
+        raise HTTPException(404, "Web UI disabled (SERVE_WEB_UI=false)")
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
 
 @app.get("/login")
 async def serve_login(request: Request):
+    if not SERVE_WEB_UI:
+        raise HTTPException(404, "Web UI disabled (SERVE_WEB_UI=false)")
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
