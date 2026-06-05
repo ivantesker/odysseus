@@ -729,6 +729,16 @@ app.include_router(setup_companion_routes())
 from routes.capabilities_routes import setup_capabilities_routes
 app.include_router(setup_capabilities_routes(model_discovery))
 
+# Drop-in plugins: any module under plugins/ that uses the registry decorators
+# (register_route/register_tool/register_action) is loaded here with no central
+# wiring. A feature becomes one new file.
+from src.plugin_registry import load_plugins, registered_routers
+_n_plugins = load_plugins()
+for _plugin_router in registered_routers():
+    app.include_router(_plugin_router)
+if _n_plugins:
+    logging.getLogger(__name__).info("Loaded %d plugin module(s)", _n_plugins)
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
