@@ -1,0 +1,7 @@
+# Developer tooling — not needed at runtime.
+# Recommended (project uses uv):
+#   uv pip install -r requirements-dev.txt
+# Plain pip also works:
+#   pip install -r requirements-dev.txt
+ruff==0.8.4
+mypy==1.13.0
