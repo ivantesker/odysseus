@@ -224,3 +224,62 @@ def test_flatten_content_shapes():
     assert session_service.flatten_content("plain") == "plain"
     assert session_service.flatten_content([{"type": "text", "text": "a"}, {"text": "b"}]) == "a\nb"
     assert session_service.flatten_content(None) == ""
+
+
+# ── auto-sort helpers ──
+
+def test_parse_folder_response_handles_fence_think_and_trailing_comma():
+    sl = [{"id": "abcd1234ffff"}, {"id": "beef5678aaaa"}]
+    raw = '<think>noise {</think>```json\n{"folders":{"Work":["abcd1234"],"Fun":["beef5678",]}}\n```'
+    folders, assignments = session_service.parse_folder_response(raw, sl)
+    assert set(folders) == {"Work", "Fun"}
+    assert assignments == {"abcd1234ffff": "Work", "beef5678aaaa": "Fun"}
+
+
+def test_parse_folder_response_raises_on_garbage():
+    with pytest.raises(ValueError):
+        session_service.parse_folder_response("the model refused", [{"id": "x"}])
+
+
+def _add_msgs(sid, *roles):
+    from core.database import ChatMessage
+    db = _TS()
+    try:
+        for i, role in enumerate(roles):
+            db.add(ChatMessage(id=str(uuid.uuid4()), session_id=sid, role=role, content=f"m{i}"))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_cleanup_deletes_empty_and_throwaway_keeps_real():
+    empty = _seed("alice", name="empty chat")  # 0 messages -> empty
+    junk = _seed("alice", name="test")          # throwaway name, few msgs
+    _add_msgs(junk, "user")
+    real = _seed("alice", name="Quarterly planning")
+    _add_msgs(real, "user", "assistant", "user", "assistant", "user")
+    mgr = _DelManager()
+
+    de, dt, folder_map = session_service.cleanup_junk_sessions(mgr, "alice")
+    assert de == 1  # the empty one
+    assert dt >= 1  # the throwaway one
+    db = _TS()
+    try:
+        remaining = {s.id for s in db.query(DbSession).all()}
+    finally:
+        db.close()
+    assert real in remaining
+    assert empty not in remaining and junk not in remaining
+
+
+def test_apply_folder_assignments_sets_folder_owner_scoped():
+    s1 = _seed("alice", name="a")
+    s2 = _seed("bob", name="b")
+    n = session_service.apply_folder_assignments("alice", {s1: "Work", s2: "Work"})
+    assert n == 1  # bob's session not touched (owner scope)
+    db = _TS()
+    try:
+        assert db.query(DbSession).filter(DbSession.id == s1).first().folder == "Work"
+        assert db.query(DbSession).filter(DbSession.id == s2).first().folder in (None, "")
+    finally:
+        db.close()

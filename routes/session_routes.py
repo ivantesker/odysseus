@@ -759,86 +759,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         """
         from src.llm_core import llm_call
         user = effective_user(request)
+
+        # Phase 1: delete empty/throwaway/incognito chats (logic in the service).
+        deleted_empty, deleted_throwaway, folder_map = session_service.cleanup_junk_sessions(
+            session_manager, user
+        )
         user_sessions = session_manager.get_sessions_for_user(user)
-
-        # Delete empty and throwaway sessions before sorting
-        from core.database import ChatMessage as DbMsg
-        db = SessionLocal()
-        deleted_empty = 0
-        deleted_throwaway = 0
-        # Names that indicate a throwaway/test session (case-insensitive exact or prefix match)
-        _THROWAWAY_NAMES = {
-            "test", "testing", "asdf", "asd", "hello", "hi", "hey",
-            "yo", "sup", "hola", "hii", "hiii", "heyo",
-            "foo", "bar", "baz", "tmp", "temp", "scratch", "untitled",
-            "new chat", "delete", "remove", "junk", "trash", "xxx",
-            "abc", "qwerty", "blah", "stuff", "whatever", "idk",
-            "ok", "lol", "bruh", "hmm", "hm", "meh",
-        }
-        _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
-        try:
-            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).all()
-            folder_map = {r.id: r.folder for r in rows}
-            # Precompute per-session message counts in TWO aggregate queries
-            # instead of 1–3 queries PER session — with many chats the per-row
-            # loop was doing thousands of round-trips and blowing the timeout.
-            from sqlalchemy import func as _sa_func
-            _counts = dict(db.query(DbMsg.session_id, _sa_func.count(DbMsg.id)).group_by(DbMsg.session_id).all())
-            _asst_counts = dict(
-                db.query(DbMsg.session_id, _sa_func.count(DbMsg.id))
-                .filter(DbMsg.role == "assistant").group_by(DbMsg.session_id).all()
-            )
-            for row in rows:
-                # Never delete important sessions
-                if getattr(row, 'is_important', False):
-                    continue
-                # Always delete incognito sessions during cleanup
-                if (row.name or "").strip() == "Incognito":
-                    should_delete = True
-                    deleted_throwaway += 1
-                    db.delete(row)
-                    if hasattr(session_manager, 'delete_session'):
-                        session_manager.delete_session(row.id)
-                    continue
-                msg_count = _counts.get(row.id, 0)
-                should_delete = False
-                if msg_count == 0:
-                    should_delete = True
-                    deleted_empty += 1
-                elif msg_count <= _THROWAWAY_MAX_MESSAGES:
-                    name = (row.name or "").strip().lower()
-                    # Check first user message content (AI renames sessions, so
-                    # "hi" becomes "Casual Greeting Exchange" — name alone won't match)
-                    first_msg = db.query(DbMsg.content).filter(
-                        DbMsg.session_id == row.id, DbMsg.role == "user"
-                    ).order_by(DbMsg.timestamp).first()
-                    first_text = (first_msg[0] or "").strip().lower() if first_msg else ""
-                    # Count assistant messages — if user sent something but AI never replied, it's dead
-                    assistant_count = _asst_counts.get(row.id, 0)
-                    if name in _THROWAWAY_NAMES or name.startswith("chat:") or first_text in _THROWAWAY_NAMES:
-                        should_delete = True
-                        deleted_throwaway += 1
-                    # Single user message with no AI response = dead session
-                    elif msg_count == 1 and assistant_count == 0:
-                        should_delete = True
-                        deleted_throwaway += 1
-                    # Short phrase (1-3 words) with no real AI conversation (<=2 msgs)
-                    elif msg_count <= 2 and first_text and len(first_text.split()) <= 3 and len(first_text) <= 40:
-                        should_delete = True
-                        deleted_throwaway += 1
-                if should_delete:
-                    db.delete(row)
-                    if hasattr(session_manager, 'delete_session'):
-                        session_manager.delete_session(row.id)
-            if deleted_empty or deleted_throwaway:
-                db.commit()
-                logger.info(f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions")
-        finally:
-            db.close()
-
-        # Re-fetch after cleanup
-        if deleted_empty or deleted_throwaway:
-            user_sessions = session_manager.get_sessions_for_user(user)
 
         # Short-circuit when the caller only wanted the cleanup phase
         # (the "Tidy (no AI)" path). Shape mirrors the post-Phase-1
@@ -923,89 +849,22 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raw = llm_call(url, model, [{"role": "user", "content": prompt}],
                            temperature=0.3, max_tokens=16384, headers=headers, timeout=120)
             logger.info(f"Auto-sort raw response ({len(raw)} chars): {raw[:300]}")
-            # Extract JSON from response — handle markdown fences, leading text,
-            # reasoning-model <think> blocks, and trailing commas.
-            text = raw.strip()
-            # Reasoning models emit <think>…</think> (often containing { } that
-            # would derail the brace scan) before the answer — drop it first.
-            text = re.sub(r'<think(?:ing)?>[\s\S]*?</think(?:ing)?>', '', text, flags=re.I).strip()
-
-            def _loads_lenient(s):
-                """Parse JSON, retrying once with trailing commas stripped."""
-                if not s:
-                    return None
-                for cand in (s, re.sub(r',(\s*[}\]])', r'\1', s)):
-                    try:
-                        return json.loads(cand)
-                    except json.JSONDecodeError:
-                        continue
-                return None
-
-            result = _loads_lenient(text)
-            # Markdown code fence
-            if result is None:
-                fence_match = re.search(r'```(?:json)?\s*\n?([\s\S]*?)```', text)
-                if fence_match:
-                    result = _loads_lenient(fence_match.group(1).strip())
-            # First { … last } block
-            if result is None:
-                brace_start = text.find('{')
-                brace_end = text.rfind('}')
-                if brace_start >= 0 and brace_end > brace_start:
-                    result = _loads_lenient(text[brace_start:brace_end + 1])
-            if result is None:
-                logger.error(f"Auto-sort: could not parse JSON from: {text[:500]}")
-                raise HTTPException(502, "AI returned invalid JSON for auto-sort — the model may not follow JSON instructions; try a different utility model in Settings.")
-        except HTTPException:
-            raise
+            folders, assignments = session_service.parse_folder_response(raw, session_list)
+        except ValueError as e:
+            logger.error(f"Auto-sort: {e}")
+            raise HTTPException(502, "AI returned invalid JSON for auto-sort — the model may not follow JSON instructions; try a different utility model in Settings.") from e
         except Exception as e:
             logger.error(f"Auto-sort LLM call failed: {e}")
             raise HTTPException(502, f"Auto-sort failed: {str(e)}") from e
 
-        folders = result.get("folders", {})
         if not folders:
             return {"status": "skipped", "reason": "AI found no groupings"}
 
-        # Build id -> folder map
-        id_prefix_map = {s["id"][:8]: s["id"] for s in session_list}
-        assignments = {}
-        for folder_name, ids in folders.items():
-            for sid_or_prefix in ids:
-                # Match by full ID or prefix
-                full_id = None
-                if sid_or_prefix in id_prefix_map.values():
-                    full_id = sid_or_prefix
-                else:
-                    # Try prefix match
-                    prefix = sid_or_prefix.rstrip(".").rstrip(" ")
-                    if prefix in id_prefix_map:
-                        full_id = id_prefix_map[prefix]
-                    else:
-                        # Fuzzy prefix match
-                        for p, fid in id_prefix_map.items():
-                            if fid.startswith(prefix) or prefix.startswith(p):
-                                full_id = fid
-                                break
-                if full_id:
-                    assignments[full_id] = folder_name
-
-        # Apply folder assignments
-        updated = 0
-        db = SessionLocal()
         try:
-            for sid, folder_name in assignments.items():
-                db_session = db.query(DbSession).filter(DbSession.id == sid, DbSession.owner == user).first()
-                if db_session:
-                    db_session.folder = folder_name
-                    db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
-                    updated += 1
-            db.commit()
+            updated = session_service.apply_folder_assignments(user, assignments)
         except Exception as e:
-            db.rollback()
             logger.error(f"Auto-sort DB update failed: {e}")
             raise HTTPException(500, "Failed to apply folder assignments") from e
-        finally:
-            db.close()
 
         # How many unfiled chats are left after this batch — the
         # frontend uses this to decide whether to show "Tidy more" or
