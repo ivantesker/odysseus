@@ -68,10 +68,10 @@ from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_imag
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-)
+# Central config: level/file/format via env, per-request correlation ids, and
+# tamed third-party noise. See src/logging_setup.py.
+from src.logging_setup import configure_logging, request_id_var
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # ========= APP =========
@@ -362,6 +362,55 @@ if AUTH_ENABLED:
     logger.info("Auth middleware enabled (AUTH_ENABLED=true)")
 else:
     logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
+
+
+# ========= REQUEST LOGGING =========
+# Added last so it is the OUTERMOST middleware: it assigns a request-id before
+# anything else runs (every log line during the request carries it) and logs the
+# outcome after auth has resolved the user. Unhandled exceptions are logged with
+# a full traceback here, then re-raised for FastAPI's normal error handling.
+import time as _time
+import uuid as _uuid
+
+_REQ_LOG = logging.getLogger("odysseus.request")
+# Don't spam one line per static asset / health poll; those are rarely useful
+# for debugging and drown out the signal.
+_REQ_LOG_SKIP_PREFIXES = ("/static", "/api/health")
+
+
+class RequestLoggingMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        rid = _uuid.uuid4().hex[:8]
+        token = request_id_var.set(rid)
+        request.state.request_id = rid
+        start = _time.monotonic()
+        path = request.url.path
+        noisy = any(path.startswith(p) for p in _REQ_LOG_SKIP_PREFIXES)
+        try:
+            response = await call_next(request)
+        except Exception:
+            dur_ms = (_time.monotonic() - start) * 1000
+            _REQ_LOG.exception(
+                "%s %s -> EXCEPTION %.0fms user=%s",
+                request.method, path, dur_ms,
+                getattr(request.state, "current_user", "-"),
+            )
+            request_id_var.reset(token)
+            raise
+        dur_ms = (_time.monotonic() - start) * 1000
+        response.headers["X-Request-ID"] = rid
+        if not noisy or response.status_code >= 400:
+            level = logging.WARNING if response.status_code >= 500 else logging.INFO
+            _REQ_LOG.log(
+                level, "%s %s -> %s %.0fms user=%s",
+                request.method, path, response.status_code, dur_ms,
+                getattr(request.state, "current_user", "-"),
+            )
+        request_id_var.reset(token)
+        return response
+
+
+app.add_middleware(RequestLoggingMiddleware)
 
 # ========= STATIC FILES =========
 os.makedirs(STATIC_DIR, exist_ok=True)
