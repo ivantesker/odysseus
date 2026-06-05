@@ -924,9 +924,11 @@ def test_email_thread_rendering_sanitizes_body_html():
 
 
 def test_session_html_export_escapes_name():
-    src = Path(__file__).resolve().parents[1] / "routes" / "session_routes.py"
+    # HTML export rendering moved into the session service; the escaping must
+    # still be present there.
+    src = Path(__file__).resolve().parents[1] / "src" / "services" / "session_service.py"
     text = src.read_text(encoding='utf-8')
-    assert "safe_title = html.escape(session.name" in text
+    assert "safe_title = _html.escape(session.name" in text
     assert "<title>{session.name}" not in text
     assert "<h1>{session.name}</h1>" not in text
 

@@ -61,8 +61,12 @@ def archived_endpoint(monkeypatch):
     import routes.session_routes as sr
     from unittest.mock import MagicMock
 
+    from src.services import session_service
+
     _stub_multipart_if_missing(monkeypatch)
     monkeypatch.setattr(sr, "SessionLocal", _TS)
+    # The archived-listing logic now lives in the service; patch its SessionLocal.
+    monkeypatch.setattr(session_service, "SessionLocal", _TS)
     monkeypatch.setattr(sr, "effective_user", lambda request: "alice")
     router = sr.setup_session_routes(MagicMock(), {})
     return _route(router, "/api/sessions/archived")

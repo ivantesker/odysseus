@@ -26,6 +26,10 @@ try:
     import sqlalchemy  # noqa: F401
     import sqlalchemy.orm  # noqa: F401
     import core.database  # noqa: F401
+    # Domain services bind core.database symbols (Session, SessionLocal) at
+    # import; pre-import them here too so they bind to the REAL ORM before any
+    # test module's stub can win — otherwise their queries hit a MagicMock.
+    import src.services.session_service  # noqa: F401
 except ImportError:
     pass  # not installed — the stubs below will handle it
 
