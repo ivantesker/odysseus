@@ -35,6 +35,7 @@ from fastapi.responses import FileResponse
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited
+from src.services import email_service
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -157,12 +158,9 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
         logger.debug("email_received event detection skipped", exc_info=True)
 
 
-def _folder_name_from_list_line(line) -> str | None:
-    decoded = line.decode() if isinstance(line, bytes) else str(line)
-    match = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-    if not match:
-        return None
-    return match.group(1) or match.group(2)
+# Pure parsing/formatting/sanitization helpers now live in the email service;
+# alias them so the connection-bound helpers in this module keep working.
+_folder_name_from_list_line = email_service.folder_name_from_list_line
 
 
 def _list_imap_folders(conn) -> tuple[list, list[str]]:
@@ -205,19 +203,8 @@ def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
     return preferred
 
 
-def _folder_role_from_name(name: str) -> str:
-    lower = (name or "").lower()
-    if "trash" in lower or "bin" in lower or "deleted" in lower:
-        return "trash"
-    if "spam" in lower or "junk" in lower:
-        return "junk"
-    if "archive" in lower or "all mail" in lower:
-        return "archive"
-    return ""
-
-
-def _uid_bytes(uid: str | bytes) -> bytes:
-    return uid if isinstance(uid, bytes) else str(uid).encode()
+_folder_role_from_name = email_service.folder_role_from_name
+_uid_bytes = email_service.uid_bytes
 
 
 def _uid_exists(conn, uid: str) -> bool:
@@ -243,13 +230,8 @@ def _imap_uid_fetch(conn, uid_set: str | bytes, query: str):
     return conn.uid("FETCH", _uid_bytes(uid_set), query)
 
 
-def _uid_from_fetch_meta(meta_b: bytes) -> str:
-    m = re.search(rb"\bUID\s+(\d+)\b", meta_b)
-    return m.group(1).decode() if m else ""
-
-
-def _smtp_ready(cfg: dict) -> bool:
-    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
+_uid_from_fetch_meta = email_service.uid_from_fetch_meta
+_smtp_ready = email_service.smtp_ready
 
 
 def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict:
@@ -324,136 +306,11 @@ def _apply_odysseus_headers(msg, kind: str | None = None, ref_id: str | None = N
         msg["X-Odysseus-Ref"] = re.sub(r"[^A-Za-z0-9_.:-]", "-", ref_id)[:128]
 
 
-def _envelope_recipients(*fields: str) -> list:
-    """Extract bare SMTP envelope addresses from one or more To/Cc/Bcc header
-    strings. A naive `field.split(",")` corrupts display names that contain a
-    comma (e.g. `"Smith, John" <john@corp.com>`, the canonical Outlook form):
-    it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
-    email.utils.getaddresses parses the address grammar correctly."""
-    out = []
-    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
-        addr = (addr or "").strip()
-        if addr:
-            out.append(addr)
-    return out
+_envelope_recipients = email_service.envelope_recipients
 
 
-def _md_to_email_html(text: str) -> str:
-    """Render the compose markdown body to a SAFE HTML fragment for the email's
-    text/html part. Everything is HTML-escaped FIRST (so a pasted <script> /
-    <img onerror=...> can never become live HTML in the recipient's client),
-    then the toolbar's formatting is layered on with controlled regex: bold,
-    italic, strike, inline code, http(s) links, headings, and bullet/numbered
-    lists. Plain-text readers still get the raw markdown via the text/plain part.
-    """
-    def _inline(s: str) -> str:
-        s = html.escape(s)                                  # escape BEFORE formatting
-        s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
-        s = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", s)
-        s = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", s)
-        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
-        # links: text + http(s) url only (escape() already neutralised quotes)
-        s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', s)
-        return s
-
-    parts: list[str] = []
-    in_ul = in_ol = False
-    for ln in (text or "").split("\n"):
-        m_h = re.match(r"^(#{1,3})\s+(.*)$", ln)
-        m_ul = re.match(r"^\s*[-*]\s+(.*)$", ln)
-        m_ol = re.match(r"^\s*\d+\.\s+(.*)$", ln)
-        if m_h:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if in_ol: parts.append("</ol>"); in_ol = False
-            lvl = len(m_h.group(1))
-            parts.append(f"<h{lvl}>{_inline(m_h.group(2))}</h{lvl}>")
-        elif m_ul:
-            if in_ol: parts.append("</ol>"); in_ol = False
-            if not in_ul: parts.append("<ul>"); in_ul = True
-            parts.append(f"<li>{_inline(m_ul.group(1))}</li>")
-        elif m_ol:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if not in_ol: parts.append("<ol>"); in_ol = True
-            parts.append(f"<li>{_inline(m_ol.group(1))}</li>")
-        else:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if in_ol: parts.append("</ol>"); in_ol = False
-            parts.append(_inline(ln) + "<br>")
-    if in_ul: parts.append("</ul>")
-    if in_ol: parts.append("</ol>")
-    return "<html><body>" + "\n".join(parts) + "</body></html>"
-
-
-# Tags the WYSIWYG email composer may legitimately produce.
-_EMAIL_ALLOWED_TAGS = {
-    "b", "strong", "i", "em", "u", "s", "strike", "del", "a", "br", "p", "div",
-    "ul", "ol", "li", "blockquote", "span", "h1", "h2", "h3", "code", "pre",
-}
-
-
-class _EmailHtmlSanitizer(_HTMLParser):
-    """Allowlist sanitizer for WYSIWYG-composed email HTML. Emits only known
-    formatting tags (all attributes dropped except a safe href on <a>), escapes
-    all text, and discards <script>/<style> content entirely — so client-sent
-    HTML can never carry live script/handlers into the recipient's client."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.out = []
-        self._skip = 0  # depth inside <script>/<style>
-
-    def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style"):
-            self._skip += 1
-            return
-        if tag == "br":
-            self.out.append("<br>")
-            return
-        if tag not in _EMAIL_ALLOWED_TAGS:
-            return
-        if tag == "a":
-            href = ""
-            for k, v in attrs:
-                if k.lower() == "href" and v and re.match(r"^(https?:|mailto:)", v.strip(), re.I):
-                    href = v.strip()
-            self.out.append(
-                f'<a href="{html.escape(href, quote=True)}" target="_blank" rel="noopener noreferrer">'
-                if href else "<a>")
-        else:
-            self.out.append(f"<{tag}>")
-
-    def handle_startendtag(self, tag, attrs):
-        if tag == "br":
-            self.out.append("<br>")
-
-    def handle_endtag(self, tag):
-        if tag in ("script", "style"):
-            if self._skip:
-                self._skip -= 1
-            return
-        if tag == "br" or tag not in _EMAIL_ALLOWED_TAGS:
-            return
-        self.out.append(f"</{tag}>")
-
-    def handle_data(self, data):
-        if self._skip:
-            return
-        self.out.append(html.escape(data))
-
-
-def _sanitize_email_html(raw: str) -> str:
-    """Return a safe <html><body>…</body></html> from client-supplied compose
-    HTML, or None if it can't be parsed."""
-    p = _EmailHtmlSanitizer()
-    try:
-        p.feed(raw or "")
-        p.close()
-    except Exception:
-        return None
-    inner = "".join(p.out).strip()
-    if not inner:
-        return None
-    return f"<html><body>{inner}</body></html>"
+_md_to_email_html = email_service.md_to_email_html
+_sanitize_email_html = email_service.sanitize_email_html
 
 
 def setup_email_routes():
