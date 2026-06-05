@@ -286,7 +286,7 @@ def setup_chat_routes(
         try:
             sess = session_manager.get_session(session)
         except KeyError:
-            raise HTTPException(404, f"Session '{session}' not found")
+            raise HTTPException(404, f"Session '{session}' not found") from None
         owner = get_current_user(request)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
@@ -373,11 +373,11 @@ def setup_chat_routes(
                 try:
                     body = await request.json()
                 except json.JSONDecodeError as e:
-                    raise HTTPException(400, f"Invalid JSON: {e}")
+                    raise HTTPException(400, f"Invalid JSON: {e}") from e
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(400, f"Request parsing error: {e}")
+            raise HTTPException(400, f"Request parsing error: {e}") from e
 
         _set_user_time_from_request(request)
 
@@ -468,9 +468,9 @@ def setup_chat_routes(
                     "No model selected for this chat. Open the model picker and choose one before sending.",
                 )
         except SessionNotFoundError as e:
-            raise HTTPException(404, str(e))
+            raise HTTPException(404, str(e)) from e
         except (ValueError, ValidationError):
-            raise HTTPException(400, "Invalid request parameters")
+            raise HTTPException(400, "Invalid request parameters") from None
 
         # ------------------------------------------------------------------ #
         # Privilege gates that must fire BEFORE any LLM work / token spend.
@@ -1194,7 +1194,7 @@ def setup_chat_routes(
             session_manager.save_sessions()
             return {"status": "context_injected"}
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
 
     # ------------------------------------------------------------------ #
     # GET /api/search — search across chat messages
@@ -1262,7 +1262,7 @@ def setup_chat_routes(
         try:
             body = await request.json()
         except Exception:
-            raise HTTPException(400, "Invalid JSON")
+            raise HTTPException(400, "Invalid JSON") from None
 
         session_id = body.get("session_id")
         original_text = body.get("original_text", "")
@@ -1276,7 +1276,7 @@ def setup_chat_routes(
         try:
             sess = session_manager.get_session(session_id)
         except (KeyError, SessionNotFoundError):
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
 
         messages = [
             {"role": "system", "content": (

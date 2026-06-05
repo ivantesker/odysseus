@@ -116,7 +116,7 @@ def setup_upload_routes(upload_handler):
             return upload_handler.get_upload_stats()
         except Exception as e:
             logger.error(f"Failed to get upload stats: {e}")
-            raise HTTPException(500, "Failed to get upload statistics")
+            raise HTTPException(500, "Failed to get upload statistics") from e
 
     @router.get("/{file_id}")
     async def download_file(request: Request, file_id: str, thumb: int = 0):
@@ -228,7 +228,7 @@ def setup_upload_routes(upload_handler):
             text = analyze_image_with_vl(path) or ""
         except Exception as e:
             logger.error(f"Vision analysis failed for {file_id}: {e}")
-            raise HTTPException(500, f"Vision analysis failed: {e}")
+            raise HTTPException(500, f"Vision analysis failed: {e}") from e
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
                 f.write(text)

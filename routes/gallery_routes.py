@@ -48,7 +48,7 @@ def _gallery_image_path(filename: str) -> Path:
         if os.path.commonpath([str(root), str(path)]) != str(root):
             raise ValueError
     except Exception:
-        raise HTTPException(400, "Unsafe gallery filename")
+        raise HTTPException(400, "Unsafe gallery filename") from None
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
     return path
@@ -175,7 +175,7 @@ def setup_gallery_routes() -> APIRouter:
                 db.commit()
             except Exception as e:
                 db.rollback()
-                raise HTTPException(500, f"DB commit failed: {e}")
+                raise HTTPException(500, f"DB commit failed: {e}") from e
             return {"ok": True, "width": img.width, "height": img.height}
         finally:
             db.close()
@@ -219,7 +219,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             angle = int(data.get("angle", 90))
         except (TypeError, ValueError):
-            raise HTTPException(400, "Invalid angle")
+            raise HTTPException(400, "Invalid angle") from None
         if angle not in (90, -90, 180, 270):
             raise HTTPException(400, "Angle must be 90, -90, 180, or 270")
 
@@ -509,7 +509,7 @@ def setup_gallery_routes() -> APIRouter:
             }
         except Exception as e:
             logger.error(f"Failed to fetch gallery library: {e}")
-            raise HTTPException(500, f"Failed to fetch gallery library: {e}")
+            raise HTTPException(500, f"Failed to fetch gallery library: {e}") from e
         finally:
             db.close()
 
@@ -691,7 +691,7 @@ def setup_gallery_routes() -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -770,7 +770,7 @@ def setup_gallery_routes() -> APIRouter:
             return {"ok": True, "cleared": cleared}
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -796,7 +796,7 @@ def setup_gallery_routes() -> APIRouter:
             return {"ok": True, "cleared": cleared}
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -834,7 +834,7 @@ def setup_gallery_routes() -> APIRouter:
             return {"ok": True, "rows_touched": rows_touched, "tags_removed": tags_removed}
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -946,7 +946,7 @@ def setup_gallery_routes() -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -1024,7 +1024,7 @@ def setup_gallery_routes() -> APIRouter:
             try:
                 from PIL import Image
             except ImportError:
-                raise HTTPException(500, "Pillow not installed on server")
+                raise HTTPException(500, "Pillow not installed on server") from None
 
             try:
                 img_bytes = base64.b64decode(body["image"])
@@ -1048,7 +1048,7 @@ def setup_gallery_routes() -> APIRouter:
             except HTTPException:
                 raise
             except Exception as e:
-                raise HTTPException(400, f"Failed to prepare OpenAI request: {e}")
+                raise HTTPException(400, f"Failed to prepare OpenAI request: {e}") from e
 
             width = int(body.get("width") or 1024)
             height = int(body.get("height") or 1024)
@@ -1122,7 +1122,7 @@ def setup_gallery_routes() -> APIRouter:
                         logger.warning(f"Inpaint compose failed, returning raw: {comp_err}")
                         return {"image": raw_b64}
             except httpx.TimeoutException:
-                raise HTTPException(504, "OpenAI inpaint timed out (120s)")
+                raise HTTPException(504, "OpenAI inpaint timed out (120s)") from None
 
         # Self-hosted diffusion server path
         try:
@@ -1136,11 +1136,11 @@ def setup_gallery_routes() -> APIRouter:
                     raise HTTPException(r.status_code, f"Inpaint failed: {r.text[:200]}")
                 return r.json()
         except httpx.TimeoutException:
-            raise HTTPException(504, "Inpaint request timed out (120s)")
+            raise HTTPException(504, "Inpaint request timed out (120s)") from None
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(502, f"Inpaint error: {str(e)}")
+            raise HTTPException(502, f"Inpaint error: {str(e)}") from e
 
     # ---- POST /api/image/harmonize — proper img2img call ----
     # Earlier version routed through inpaint with a full-white mask, but
@@ -1337,9 +1337,9 @@ def setup_gallery_routes() -> APIRouter:
                                         return {"image": _b64.b64encode(ir.content).decode()}
                     last_err = f"{path}: server returned no image"
                 except httpx.ConnectError as e:
-                    raise HTTPException(502, f"Can't reach diffusion server at {base}: {e}")
+                    raise HTTPException(502, f"Can't reach diffusion server at {base}: {e}") from e
                 except httpx.TimeoutException:
-                    raise HTTPException(504, "Harmonize timed out (240s) — restart the diffusion server or lower Color match / disable Seam fix")
+                    raise HTTPException(504, "Harmonize timed out (240s) — restart the diffusion server or lower Color match / disable Seam fix") from None
         raise HTTPException(502,
             f"None of the img2img routes worked on {base}. "
             f"Last response: {last_err or 'unknown'}. "
@@ -1388,7 +1388,7 @@ def setup_gallery_routes() -> APIRouter:
             from PIL import Image
             import numpy as np
         except ImportError as e:
-            raise HTTPException(500, f"Server missing dependency: {e}")
+            raise HTTPException(500, f"Server missing dependency: {e}") from e
         # Decode source image (RGB; Real-ESRGAN doesn't preserve alpha).
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
@@ -1438,7 +1438,7 @@ def setup_gallery_routes() -> APIRouter:
             from PIL import Image
             import numpy as np
         except ImportError as e:
-            raise HTTPException(500, f"Server missing dependency: {e}")
+            raise HTTPException(500, f"Server missing dependency: {e}") from e
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
@@ -1622,7 +1622,7 @@ def setup_gallery_routes() -> APIRouter:
             enhanced.save(buf, format="PNG")
             return {"image": base64.b64encode(buf.getvalue()).decode(), "method": "pil"}
         except Exception as e:
-            raise HTTPException(500, f"Face enhancement failed: {str(e)}")
+            raise HTTPException(500, f"Face enhancement failed: {str(e)}") from e
 
     # ---- Album management (path-param routes) ----
 

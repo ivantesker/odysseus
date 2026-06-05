@@ -304,7 +304,7 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
             if os.path.commonpath([os.path.normcase(resolved), nbase]) != nbase:
                 raise ValueError
         except ValueError:
-            raise ValueError(f"path '{raw_path}' is outside the workspace ({workspace})")
+            raise ValueError(f"path '{raw_path}' is outside the workspace ({workspace})") from None
     return resolved
 
 # Bash + python tools used to share a single 60s timeout. That's

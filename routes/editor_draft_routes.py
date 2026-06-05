@@ -130,7 +130,7 @@ def setup_editor_draft_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.warning(f"editor-draft create failed: {e}")
-            raise HTTPException(500, "Could not save draft")
+            raise HTTPException(500, "Could not save draft") from e
         finally:
             db.close()
 
@@ -162,7 +162,7 @@ def setup_editor_draft_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.warning(f"editor-draft update failed: {e}")
-            raise HTTPException(500, "Could not update draft")
+            raise HTTPException(500, "Could not update draft") from e
         finally:
             db.close()
 
@@ -181,7 +181,7 @@ def setup_editor_draft_routes() -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 

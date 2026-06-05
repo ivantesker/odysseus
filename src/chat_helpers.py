@@ -217,7 +217,7 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
                 "error": "FILE_READ_ERROR",
                 "message": "Error reading uploaded file"
             }
-        )
+        ) from e
 
     allowed_extensions = {'.txt', '.py', '.html', '.md', '.json', '.csv', '.js',
                          '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.pdf',
@@ -281,7 +281,7 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
                     "error": "SESSION_NOT_FOUND",
                     "message": f"Session '{session}' not found"
                 }
-            )
+            ) from None
 
         return message, session
     except HTTPException:
@@ -294,7 +294,7 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
                 "error": "INVALID_JSON",
                 "message": "Invalid JSON in request body"
             }
-        )
+        ) from e
     except Exception as e:
         logger.error(f"Unexpected error in coerce_message_and_session: {e}")
         raise HTTPException(
@@ -303,4 +303,4 @@ def coerce_message_and_session(req_json: dict | None, message: str | None,
                 "error": "REQUEST_PROCESSING_ERROR",
                 "message": "Error processing request"
             }
-        )
+        ) from e

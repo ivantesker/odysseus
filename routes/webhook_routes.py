@@ -108,11 +108,11 @@ def setup_webhook_routes(
         try:
             url = validate_webhook_url(url)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         try:
             events = validate_events(events)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
 
         secret_val = secret.strip()[:MAX_SECRET_LEN] or None
         # Encrypt the secret at rest using the same Fernet key as API keys
@@ -254,7 +254,7 @@ def setup_webhook_routes(
             try:
                 sess = session_manager.get_session(session_id)
             except (KeyError, Exception):
-                raise HTTPException(404, "Session not found")
+                raise HTTPException(404, "Session not found") from None
             # SECURITY: verify the API-token's user owns this session — without
             # this any token holder could resume any user's chat by passing its
             # ID. The token's user is on request.state.user (set by API-token
@@ -284,7 +284,7 @@ def setup_webhook_routes(
                     base_url = validate_public_http_url(direct_base_url)
                 except ValueError as e:
                     detail = str(e).replace("URL", "base_url", 1)
-                    raise HTTPException(400, detail)
+                    raise HTTPException(400, detail) from e
             else:
                 base_url = _resolve_base_url(model, body.provider)
             if not base_url:
@@ -341,7 +341,7 @@ def setup_webhook_routes(
                             ]
                         model = ids[0] if ids else "auto"
                 except Exception:
-                    raise HTTPException(500, "Could not discover models from endpoint")
+                    raise HTTPException(500, "Could not discover models from endpoint") from None
 
             if not session_manager:
                 raise HTTPException(500, "Session manager not available")

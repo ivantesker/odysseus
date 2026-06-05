@@ -959,7 +959,7 @@ def setup_shell_routes() -> APIRouter:
                         }
                         break
             except ValueError as e:
-                raise HTTPException(400, str(e))
+                raise HTTPException(400, str(e)) from e
             except Exception:
                 remote_status = {}
         if host and remote_system_names:
@@ -980,7 +980,7 @@ def setup_shell_routes() -> APIRouter:
                     if sep and name in remote_system_names:
                         remote_status[name] = value == "1"
             except ValueError as e:
-                raise HTTPException(400, str(e))
+                raise HTTPException(400, str(e)) from e
             except Exception:
                 pass
 
@@ -1090,7 +1090,7 @@ def setup_shell_routes() -> APIRouter:
         try:
             argv = (_ssh_base_argv(host, ssh_port) + [cmd]) if host else ["bash", "-lc", cmd]
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE

@@ -452,7 +452,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 from croniter import croniter
                 croniter(req.cron_expression)
             except Exception:
-                raise HTTPException(400, "Invalid cron expression")
+                raise HTTPException(400, "Invalid cron expression") from None
         if req.trigger_type == "event" and not req.trigger_event:
             raise HTTPException(400, "Event name is required for event-triggered tasks")
         if req.trigger_type == "event" and not req.trigger_count:
@@ -477,7 +477,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 try:
                     sched_date = datetime.fromisoformat(req.scheduled_date.replace("Z", "+00:00")).replace(tzinfo=None)
                 except ValueError:
-                    raise HTTPException(400, "Invalid scheduled_date format")
+                    raise HTTPException(400, "Invalid scheduled_date format") from None
             next_run = compute_next_run(
                 req.schedule, req.scheduled_time,
                 req.scheduled_day, sched_date,
@@ -680,7 +680,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                         from croniter import croniter
                         croniter(req.cron_expression)
                     except Exception:
-                        raise HTTPException(400, "Invalid cron expression")
+                        raise HTTPException(400, "Invalid cron expression") from None
                 task.cron_expression = req.cron_expression or None
 
             # Recompute next_run if schedule changed
@@ -700,7 +700,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                         req.scheduled_date.replace("Z", "+00:00")
                     ).replace(tzinfo=None)
                 except ValueError:
-                    raise HTTPException(400, "Invalid scheduled_date format")
+                    raise HTTPException(400, "Invalid scheduled_date format") from None
                 schedule_changed = True
 
             if req.cron_expression is not None:

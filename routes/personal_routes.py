@@ -148,7 +148,7 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             raise
         except Exception as e:
             logger.error(f"Error adding directory to RAG: {e}")
-            raise HTTPException(500, f"Failed to add directory: {str(e)}")
+            raise HTTPException(500, f"Failed to add directory: {str(e)}") from e
 
     @router.delete("/remove_directory")
     async def remove_directory_from_rag(directory: str = Query(...), owner: str = Depends(require_user), _admin: None = Depends(require_admin)):
@@ -189,7 +189,7 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             raise
         except Exception as e:
             logger.error(f"Error removing directory from RAG: {e}")
-            raise HTTPException(500, f"Failed to remove directory: {str(e)}")
+            raise HTTPException(500, f"Failed to remove directory: {str(e)}") from e
 
     @router.post("/upload")
     async def upload_files_to_rag(request: Request, files: list[UploadFile] = File(...)):
@@ -300,6 +300,6 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             }
         except Exception as e:
             logger.error(f"Failed to delete file {filepath}: {e}")
-            raise HTTPException(500, f"Failed to delete file: {str(e)}")
+            raise HTTPException(500, f"Failed to delete file: {str(e)}") from e
 
     return router

@@ -779,7 +779,7 @@ def setup_contacts_routes():
                     try:
                         settings[key] = _validate_carddav_url(data[key])
                     except ValueError as e:
-                        raise HTTPException(400, str(e))
+                        raise HTTPException(400, str(e)) from e
                 else:
                     settings[key] = data[key]
         _save_settings(settings)

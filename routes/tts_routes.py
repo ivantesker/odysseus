@@ -25,7 +25,7 @@ def setup_tts_routes(tts_service):
             return tts_service.get_stats()
         except Exception as e:
             logger.error(f"Failed to get TTS stats: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/synthesize")
     async def synthesize_speech(request: TTSRequest):
@@ -72,7 +72,7 @@ def setup_tts_routes(tts_service):
             raise HTTPException(
                 status_code=500,
                 detail={"message": f"Synthesis failed: {str(e)}"}
-            )
+            ) from e
 
     @router.post("/clear-cache")
     async def clear_tts_cache():
@@ -82,6 +82,6 @@ def setup_tts_routes(tts_service):
             return {"success": True, "message": "Cache cleared"}
         except Exception as e:
             logger.error(f"Failed to clear cache: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     return router

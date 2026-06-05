@@ -1147,7 +1147,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         try:
             from src.agent_loop import TOOL_SECTIONS, get_builtin_overrides
         except Exception as e:
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         default = None
         for key, raw in TOOL_SECTIONS.items():
             names = key if isinstance(key, tuple) else (key,)
@@ -1371,7 +1371,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         try:
             url, model, headers, teacher = _resolve_audit_models(owner=user)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
 
         skills = skills_manager.load(owner=user)
         by_name = {s.get("name"): s for s in skills if s.get("name")}
@@ -1460,7 +1460,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         try:
             sk = Skill.from_markdown(new_content)
         except Exception as e:
-            raise HTTPException(400, f"Could not parse SKILL.md: {e}")
+            raise HTTPException(400, f"Could not parse SKILL.md: {e}") from e
         # Never rename on save: a changed `name` in the markdown would move
         # the skill dir (update_skill) and orphan the original id, so a later
         # delete 404s (#1333). Pin to the stored name, like _apply_skill_md.

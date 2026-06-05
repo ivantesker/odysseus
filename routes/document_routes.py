@@ -135,7 +135,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error(f"Failed to create document: {e}")
-            raise HTTPException(500, f"Failed to create document: {e}")
+            raise HTTPException(500, f"Failed to create document: {e}") from e
         finally:
             db.close()
 
@@ -189,7 +189,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"PDF import save_upload failed: {e}")
-            raise HTTPException(500, f"Upload failed: {e}")
+            raise HTTPException(500, f"Upload failed: {e}") from e
 
         upload_id = meta["id"]
         pdf_path = _locate_current_user_upload(request, upload_id, user)
@@ -347,7 +347,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             }
         except Exception as e:
             logger.error(f"Failed to fetch document library: {e}")
-            raise HTTPException(500, f"Failed to fetch document library: {e}")
+            raise HTTPException(500, f"Failed to fetch document library: {e}") from e
         finally:
             db.close()
 
@@ -440,7 +440,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 body_text = strip_pdf_content_marker(_process_pdf(pdf_path))
             except Exception as e:
                 logger.error(f"extract_pdf_text failed for {pdf_path}: {e}")
-                raise HTTPException(500, f"Extraction failed: {e}")
+                raise HTTPException(500, f"Extraction failed: {e}") from e
 
             if not body_text:
                 return {"ok": True, "id": doc_id, "extracted": False, "reason": "No readable content"}
@@ -586,7 +586,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, f"Failed to update document: {e}")
+            raise HTTPException(500, f"Failed to update document: {e}") from e
         finally:
             db.close()
 
@@ -623,7 +623,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -651,7 +651,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -736,7 +736,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
         finally:
             db.close()
 
@@ -839,7 +839,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error(f"Document tidy failed: {e}")
-            raise HTTPException(500, f"Tidy failed: {e}")
+            raise HTTPException(500, f"Tidy failed: {e}") from e
         finally:
             db.close()
 
@@ -936,7 +936,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error(f"AI tidy failed: {e}")
-            raise HTTPException(500, f"AI tidy failed: {e}")
+            raise HTTPException(500, f"AI tidy failed: {e}") from e
         finally:
             db.close()
 
@@ -1158,7 +1158,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             url, model_id, headers = _resolve_vl_model(vl_model)
         except Exception as e:
-            raise HTTPException(503, f"No vision model available: {e}")
+            raise HTTPException(503, f"No vision model available: {e}") from e
 
         system_prompt = (
             "You analyze rendered PDF page images and propose values to fill in. "
@@ -1306,7 +1306,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             except Exception as e:
                 logger.error(f"render_pdf fill_fields failed for {doc_id}: {e}")
                 _cleanup_temps()
-                raise HTTPException(500, f"PDF render failed: {e}")
+                raise HTTPException(500, f"PDF render failed: {e}") from e
 
             annotations = parse_markdown_annotations(doc.current_content or "")
             if annotations:
@@ -1429,7 +1429,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             except Exception as e:
                 logger.error(f"fill_fields failed for doc {doc_id}: {e}")
                 _cleanup_temps()
-                raise HTTPException(500, f"PDF fill failed: {e}")
+                raise HTTPException(500, f"PDF fill failed: {e}") from e
 
             out_path = filled_path
             if stamps:

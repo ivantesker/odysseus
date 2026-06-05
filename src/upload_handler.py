@@ -622,7 +622,7 @@ class UploadHandler:
                 while chunk := file_obj.read(8192):
                     f.write(chunk)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}") from e
 
         # Create file metadata
         file_metadata = {

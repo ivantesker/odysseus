@@ -180,7 +180,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         try:
             _session_obj = session_manager.get_session(session_id)
         except KeyError:
-            raise HTTPException(404, f"Session {session_id} not found")
+            raise HTTPException(404, f"Session {session_id} not found") from None
         _assert_session_owner(_session_obj, user)
         memories = memory_manager.load(owner=user)
         session_memories = [m for m in memories if m.get("session_id") == session_id]
@@ -210,7 +210,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         try:
             sess = session_manager.get_session(session)
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         _assert_session_owner(sess, _owner(request))
 
         system_msg = {
@@ -349,7 +349,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 model = sess.model
                 headers = sess.headers
             except KeyError:
-                 raise HTTPException(404, "Session not found — needed for LLM config")
+                 raise HTTPException(404, "Session not found — needed for LLM config") from None
         else:
             endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
 
@@ -477,7 +477,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             return {"suggestions": [{"text": l, "category": "fact"} for l in lines[:20]], "filename": filename}
         except Exception as e:
             logger.error(f"Memory import extraction failed: {e}")
-            raise HTTPException(502, f"LLM extraction failed: {str(e)}")
+            raise HTTPException(502, f"LLM extraction failed: {str(e)}") from e
 
     @router.post("/{memory_id}/pin")
     def pin_memory(request: Request, memory_id: str, pinned: bool = Form(True)):

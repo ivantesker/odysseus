@@ -50,7 +50,7 @@ def setup_history_routes(session_manager) -> APIRouter:
         try:
             session = session_manager.get_session(session_id)
         except KeyError:
-            raise HTTPException(404, f"Session '{session_id}' not found")
+            raise HTTPException(404, f"Session '{session_id}' not found") from None
 
         history_dict = []
         for msg in session.history:
@@ -131,10 +131,10 @@ def setup_history_routes(session_manager) -> APIRouter:
             result = session_manager.truncate_messages(session_id, keep_count)
             return {"status": "ok", "kept": keep_count, "truncated": result}
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         except Exception as e:
             logger.error(f"Truncate error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
     @router.post("/api/session/{session_id}/message")
     async def add_message(request: Request, session_id: str):
@@ -150,7 +150,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             session_manager.add_message(session_id, msg)
             return {"status": "ok"}
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
 
     @router.post("/api/session/{session_id}/delete-messages")
     async def delete_messages(request: Request, session_id: str):
@@ -210,10 +210,10 @@ def setup_history_routes(session_manager) -> APIRouter:
             finally:
                 db.close()
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         except Exception as e:
             logger.error(f"Delete messages error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
     @router.post("/api/session/{session_id}/edit-message")
     async def edit_message(request: Request, session_id: str):
@@ -261,12 +261,12 @@ def setup_history_routes(session_manager) -> APIRouter:
             finally:
                 db.close()
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Edit message error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
     @router.post("/api/session/{session_id}/mark-stopped")
     async def mark_stopped(request: Request, session_id: str):
@@ -318,10 +318,10 @@ def setup_history_routes(session_manager) -> APIRouter:
             session_manager.save_sessions()
             return {"status": "ok"}
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         except Exception as e:
             logger.error(f"Mark stopped error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
     @router.post("/api/session/{session_id}/update-last-meta")
     async def update_last_meta(request: Request, session_id: str):
@@ -369,10 +369,10 @@ def setup_history_routes(session_manager) -> APIRouter:
             session_manager.save_sessions()
             return {"status": "ok"}
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         except Exception as e:
             logger.error(f"Update last meta error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
     @router.post("/api/session/{session_id}/merge-last-assistant")
     async def merge_last_assistant(request: Request, session_id: str):
@@ -458,10 +458,10 @@ def setup_history_routes(session_manager) -> APIRouter:
             session_manager.save_sessions()
             return {"status": "ok", "merged": True}
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         except Exception as e:
             logger.error(f"Merge assistant error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
     @router.post("/api/session/{session_id}/fork")
     async def fork_session(request: Request, session_id: str):
@@ -508,7 +508,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             raise
         except Exception as e:
             logger.error(f"Fork error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
     @router.get("/api/conversations/topics")
     async def get_conversation_topics(request: Request) -> dict[str, Any]:
@@ -517,7 +517,7 @@ def setup_history_routes(session_manager) -> APIRouter:
         try:
             return analyze_topics(session_manager, owner=user or None)
         except Exception as e:
-            raise HTTPException(500, f"Topic analysis failed: {e}")
+            raise HTTPException(500, f"Topic analysis failed: {e}") from e
 
     @router.post("/api/session/{session_id}/compact")
     async def compact_session(request: Request, session_id: str):
@@ -526,7 +526,7 @@ def setup_history_routes(session_manager) -> APIRouter:
         try:
             session = session_manager.get_session(session_id)
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         _reject_compact_during_active_run(session_id)
 
         try:
@@ -650,6 +650,6 @@ def setup_history_routes(session_manager) -> APIRouter:
 
         except Exception as e:
             logger.error(f"Manual compact error {session_id}: {e}")
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
     return router

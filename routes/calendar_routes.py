@@ -421,7 +421,7 @@ def _parse_dt(s: str) -> datetime:
             return parsed.astimezone(UTC).replace(tzinfo=None)
         return parsed
     except Exception:
-        raise ValueError(f"could not parse datetime: {s!r}")
+        raise ValueError(f"could not parse datetime: {s!r}") from None
 
 
 def _event_to_dict(ev: CalendarEvent) -> dict:
@@ -623,7 +623,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             cfg["url"] = validate_caldav_url(body.get("url", ""))
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         cfg["username"] = (body.get("username") or "").strip()
         # Preserve the stored password when the client sends an empty
         # one (edit form re-submitted without re-typing the password).
@@ -747,7 +747,7 @@ def setup_calendar_routes() -> APIRouter:
             raise
         except Exception as e:
             logger.error("Failed to delete calendar %s: %s", cal_id, e)
-            raise HTTPException(500, "Failed to delete calendar")
+            raise HTTPException(500, "Failed to delete calendar") from e
         finally:
             db.close()
 
@@ -766,7 +766,7 @@ def setup_calendar_routes() -> APIRouter:
             raise
         except Exception as e:
             logger.error("Failed to list calendars: %s", e)
-            raise HTTPException(500, "Failed to list calendars")
+            raise HTTPException(500, "Failed to list calendars") from e
         finally:
             db.close()
 
@@ -832,7 +832,7 @@ def setup_calendar_routes() -> APIRouter:
             raise
         except Exception as e:
             logger.error("Failed to list events: %s", e)
-            raise HTTPException(500, "Failed to list events")
+            raise HTTPException(500, "Failed to list events") from e
         finally:
             db.close()
 
@@ -900,7 +900,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to create event: %s", e)
-            raise HTTPException(500, "Failed to create event")
+            raise HTTPException(500, "Failed to create event") from e
         finally:
             db.close()
 
@@ -910,7 +910,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             base_uid = _resolve_base_uid(uid)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
@@ -954,7 +954,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to update event: %s", e)
-            raise HTTPException(500, "Failed to update event")
+            raise HTTPException(500, "Failed to update event") from e
         finally:
             db.close()
 
@@ -964,7 +964,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             base_uid = _resolve_base_uid(uid)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
@@ -983,7 +983,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to delete event: %s", e)
-            raise HTTPException(500, "Failed to delete event")
+            raise HTTPException(500, "Failed to delete event") from e
         finally:
             db.close()
 
@@ -1005,7 +1005,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to create calendar: %s", e)
-            raise HTTPException(500, "Failed to create calendar")
+            raise HTTPException(500, "Failed to create calendar") from e
         finally:
             db.close()
 
@@ -1026,7 +1026,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to update calendar: %s", e)
-            raise HTTPException(500, "Failed to update calendar")
+            raise HTTPException(500, "Failed to update calendar") from e
         finally:
             db.close()
 
@@ -1064,7 +1064,7 @@ def setup_calendar_routes() -> APIRouter:
             try:
                 cal_data = iCal.from_ical(content)
             except Exception as e:
-                raise HTTPException(400, f"Invalid ICS file: {e}")
+                raise HTTPException(400, f"Invalid ICS file: {e}") from e
 
             # Sanitize display name — length cap + strip control chars
             raw_name = calendar_name.strip() or (file.filename or "").replace(".ics", "").replace("_", " ").strip() or "Imported"
@@ -1183,7 +1183,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to import ICS: %s", e)
-            raise HTTPException(500, "Failed to import ICS")
+            raise HTTPException(500, "Failed to import ICS") from e
         finally:
             db.close()
 
@@ -1241,7 +1241,7 @@ def setup_calendar_routes() -> APIRouter:
             raise
         except Exception as e:
             logger.error("Failed to export ICS: %s", e)
-            raise HTTPException(500, "Failed to export ICS")
+            raise HTTPException(500, "Failed to export ICS") from e
         finally:
             db.close()
 

@@ -95,7 +95,7 @@ def _validate_caldav_hostname(host: str) -> None:
     try:
         addrs = _resolve_caldav_host_ips(host)
     except OSError:
-        raise ValueError("CalDAV URL host does not resolve")
+        raise ValueError("CalDAV URL host does not resolve") from None
     if not addrs:
         raise ValueError("CalDAV URL host does not resolve")
     for addr in addrs:
@@ -119,7 +119,7 @@ def validate_caldav_url(raw_url: str) -> str:
     try:
         parsed.port
     except ValueError:
-        raise ValueError("CalDAV URL has an invalid port")
+        raise ValueError("CalDAV URL has an invalid port") from None
     host = (parsed.hostname or "").lower()
     if host in _BLOCKED_HOSTS or host.endswith(".localhost"):
         raise ValueError("CalDAV URL host is not allowed")

@@ -24,7 +24,7 @@ def resolve_generated_image_path(filename: str) -> Path:
         if os.path.commonpath([str(root), str(path)]) != str(root):
             raise ValueError
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid filename")
+        raise HTTPException(status_code=400, detail="Invalid filename") from None
     if not path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
     return path

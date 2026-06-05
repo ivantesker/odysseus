@@ -45,7 +45,7 @@ def setup_preset_routes(preset_manager) -> APIRouter:
             return {"success": False, "message": "Failed to save preset"}
         except Exception as e:
             logger.error(f"Preset update error: {e}")
-            raise HTTPException(500, "Failed to update custom preset")
+            raise HTTPException(500, "Failed to update custom preset") from e
 
     @router.get("/api/presets/templates")
     async def get_user_templates() -> list[dict]:

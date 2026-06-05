@@ -59,7 +59,7 @@ def _model_cache_path(hf_source: str) -> Path:
     try:
         path.relative_to(root)
     except ValueError:
-        raise ValueError("Model cache path escapes cache root")
+        raise ValueError("Model cache path escapes cache root") from None
     return path
 
 
@@ -123,7 +123,7 @@ def setup_embedding_routes():
         try:
             from fastembed import TextEmbedding
         except ImportError:
-            raise HTTPException(503, "fastembed is not installed")
+            raise HTTPException(503, "fastembed is not installed") from None
 
         active = _active_model()
         catalog = TextEmbedding.list_supported_models()
@@ -162,7 +162,7 @@ def setup_embedding_routes():
         try:
             from fastembed import TextEmbedding
         except ImportError:
-            raise HTTPException(503, "fastembed is not installed")
+            raise HTTPException(503, "fastembed is not installed") from None
 
         # Validate model exists
         catalog = {m["model"]: m for m in TextEmbedding.list_supported_models()}
@@ -188,7 +188,7 @@ def setup_embedding_routes():
             return {"status": "downloaded", "model": model_name}
         except Exception as e:
             logger.error(f"Failed to download {model_name}: {e}")
-            raise HTTPException(500, f"Download failed: {str(e)}")
+            raise HTTPException(500, f"Download failed: {str(e)}") from e
         finally:
             _downloading.pop(model_name, None)
 
@@ -198,7 +198,7 @@ def setup_embedding_routes():
         try:
             from fastembed import TextEmbedding
         except ImportError:
-            raise HTTPException(503, "fastembed is not installed")
+            raise HTTPException(503, "fastembed is not installed") from None
 
         catalog = {m["model"]: m for m in TextEmbedding.list_supported_models()}
         if model_name not in catalog:
@@ -225,7 +225,7 @@ def setup_embedding_routes():
         try:
             from fastembed import TextEmbedding
         except ImportError:
-            raise HTTPException(503, "fastembed is not installed")
+            raise HTTPException(503, "fastembed is not installed") from None
 
         catalog = {m["model"]: m for m in TextEmbedding.list_supported_models()}
         if model_name not in catalog:
@@ -238,7 +238,7 @@ def setup_embedding_routes():
         try:
             model_path = _model_cache_path(hf_src)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         if not model_path.is_dir():
             return {"deleted": False, "message": "Model not cached"}
 
@@ -287,7 +287,7 @@ def setup_embedding_routes():
             )
             resp.raise_for_status()
         except Exception as e:
-            raise HTTPException(400, f"Endpoint unreachable: {e}")
+            raise HTTPException(400, f"Endpoint unreachable: {e}") from e
 
         # Persist and set in environment for immediate use
         data = {"url": url}

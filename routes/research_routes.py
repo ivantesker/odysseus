@@ -168,7 +168,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         try:
             owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
         except Exception:
-            raise HTTPException(404, "Research not found")
+            raise HTTPException(404, "Research not found") from None
         if owner != user:
             raise HTTPException(404, "Research not found")
 
@@ -183,7 +183,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             html_content = research_handler.get_report_html(session_id)
         except Exception as e:
             logger.error(f"Visual report generation error: {e}", exc_info=True)
-            raise HTTPException(500, f"Report generation failed: {e}")
+            raise HTTPException(500, f"Report generation failed: {e}") from e
         if html_content is None:
             logger.warning(f"No report data found for session {session_id}")
             raise HTTPException(404, "No visual report available for this session")
@@ -281,7 +281,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
-            raise HTTPException(500, f"Failed to read research: {e}")
+            raise HTTPException(500, f"Failed to read research: {e}") from e
         # SECURITY: 404 (not 403) so we don't leak that the report exists.
         if data.get("owner") != user:
             raise HTTPException(404, "Research not found")
@@ -304,7 +304,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(500, f"Failed to update research: {e}")
+            raise HTTPException(500, f"Failed to update research: {e}") from e
         return {"ok": True, "id": session_id, "archived": bool(archived)}
 
     @router.delete("/api/research/{session_id}")
@@ -324,7 +324,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             except HTTPException:
                 raise
             except Exception:
-                raise HTTPException(404, "Research not found")
+                raise HTTPException(404, "Research not found") from None
             json_path.unlink()
             deleted = True
         return {"deleted": deleted}

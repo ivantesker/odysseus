@@ -445,7 +445,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         try:
             session = session_manager.get_session(sid)
         except KeyError:
-            raise HTTPException(404, f"Session {sid} not found")
+            raise HTTPException(404, f"Session {sid} not found") from None
         result = {"id": sid}
         if name is not None:
             session_manager.update_session_name(sid, name)
@@ -519,7 +519,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         try:
             sess = session_manager.get_session(sid)
         except KeyError:
-            raise HTTPException(404, f"Session {sid} not found")
+            raise HTTPException(404, f"Session {sid} not found") from None
         body = await request.json()
         messages = body.get("messages", [])
         from core.models import ChatMessage
@@ -591,7 +591,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     "error": "SESSION_DELETE_ERROR",
                     "message": "Failed to delete session"
                 }
-            )
+            ) from e
 
     @router.delete("/sessions/all")
     def delete_all_sessions(request: Request):
@@ -612,7 +612,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         except Exception as e:
             db.rollback()
             logger.error(f"Error deleting all sessions: {e}")
-            raise HTTPException(500, "Failed to delete sessions")
+            raise HTTPException(500, "Failed to delete sessions") from e
         finally:
             db.close()
 
@@ -647,12 +647,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             except Exception as e:
                 db.rollback()
                 logger.error(f"Error archiving session {sid}: {e}")
-                raise HTTPException(500, "Failed to archive session")
+                raise HTTPException(500, "Failed to archive session") from e
             finally:
                 db.close()
 
         except KeyError:
-            raise HTTPException(404, f"Session '{sid}' not found")
+            raise HTTPException(404, f"Session '{sid}' not found") from None
 
     @router.post("/session/{sid}/unarchive")
     def unarchive_session(request: Request, sid: str):
@@ -680,7 +680,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         except Exception as e:
             db.rollback()
             logger.error(f"Error unarchiving session {sid}: {e}")
-            raise HTTPException(500, "Failed to unarchive session")
+            raise HTTPException(500, "Failed to unarchive session") from e
         finally:
             db.close()
 
@@ -734,7 +734,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         try:
             session = session_manager.get_session(sid)
         except KeyError:
-            raise HTTPException(404, f"Session {sid} not found")
+            raise HTTPException(404, f"Session {sid} not found") from None
         return {"history": [msg.to_dict() for msg in session.history]}
 
     @router.get("/session/{sid}/export")
@@ -747,7 +747,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         try:
             session = session_manager.get_session(sid)
         except KeyError:
-            raise HTTPException(404, f"Session {sid} not found")
+            raise HTTPException(404, f"Session {sid} not found") from None
 
         safe_name = re.sub(r'[^\w\-_]', '_', session.name)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -865,12 +865,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             except Exception as e:
                 db.rollback()
                 logger.error(f"Error updating session {session_id} importance: {e}")
-                raise HTTPException(500, "Failed to update session importance")
+                raise HTTPException(500, "Failed to update session importance") from e
             finally:
                 db.close()
 
         except KeyError:
-            raise HTTPException(404, f"Session {session_id} not found")
+            raise HTTPException(404, f"Session {session_id} not found") from None
 
     @router.post("/session/{session_id}/compact")
     async def compact_session(request: Request, session_id: str):
@@ -879,7 +879,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         try:
             session = session_manager.get_session(session_id)
         except KeyError:
-            raise HTTPException(404, f"Session {session_id} not found")
+            raise HTTPException(404, f"Session {session_id} not found") from None
         _reject_compact_during_active_run(session_id)
 
         history = list(session.history or [])
@@ -929,7 +929,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             )
         except Exception as e:
             logger.error("Manual compaction failed: %s", e)
-            raise HTTPException(500, "Compaction failed")
+            raise HTTPException(500, "Compaction failed") from e
 
         summary_msg = ChatMessage(
             role="system",
@@ -1163,7 +1163,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise
         except Exception as e:
             logger.error(f"Auto-sort LLM call failed: {e}")
-            raise HTTPException(502, f"Auto-sort failed: {str(e)}")
+            raise HTTPException(502, f"Auto-sort failed: {str(e)}") from e
 
         folders = result.get("folders", {})
         if not folders:
@@ -1206,7 +1206,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         except Exception as e:
             db.rollback()
             logger.error(f"Auto-sort DB update failed: {e}")
-            raise HTTPException(500, "Failed to apply folder assignments")
+            raise HTTPException(500, "Failed to apply folder assignments") from e
         finally:
             db.close()
 

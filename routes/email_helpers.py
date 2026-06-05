@@ -206,7 +206,7 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
         # Fail closed — a DB hiccup must not let cross-tenant access slip
         # through. 503 tells the caller to retry; logs preserve detail.
         logger.error(f"Account-owner check failed: {e}")
-        raise HTTPException(503, "Account check failed")
+        raise HTTPException(503, "Account check failed") from e
 
 def _q(name: str) -> str:
     """Quote an IMAP mailbox name. Defensive: escapes `\\` and `"` and wraps

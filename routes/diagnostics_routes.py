@@ -27,7 +27,7 @@ def setup_diagnostics_routes(
             return get_detailed_stats()
         except Exception as e:
             logger.error(f"DB stats error: {e}")
-            raise HTTPException(500, "Failed to retrieve database statistics")
+            raise HTTPException(500, "Failed to retrieve database statistics") from e
 
     @router.get("/api/rag/stats")
     async def get_rag_stats(request: Request) -> dict[str, Any]:

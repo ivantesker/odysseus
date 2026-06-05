@@ -826,7 +826,7 @@ def llm_call(url: str, model: str, messages: list[dict], temperature: float = LL
         note_model_activity(target_url, model)
         r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
     except Exception as e:
-        raise HTTPException(502, f"POST {target_url} failed: {e}")
+        raise HTTPException(502, f"POST {target_url} failed: {e}") from e
     if not r.is_success:
         raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
     data = r.json()
@@ -839,7 +839,7 @@ def llm_call(url: str, model: str, messages: list[dict], temperature: float = LL
         _set_cached_response(cache_key, response)
         return response
     except Exception:
-        raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
+        raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}") from None
 
 
 def _dedupe_candidates(candidates):
@@ -999,20 +999,20 @@ async def llm_call_async(
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:
-                raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}")
+                raise HTTPException(502, f"Unexpected schema from {target_url}: {str(data)[:400]}") from None
         except (httpx.ConnectError, httpx.ConnectTimeout) as e:
             _cooled = _mark_host_dead(target_url)
             duration = time.time() - start
             _tail = f" — host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " — transient, will retry"
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
             if _cooled or attempt >= max_retries:
-                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
+                raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}") from e
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
             if attempt >= max_retries:
-                raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
+                raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}") from e
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
 async def stream_llm(url: str, model: str, messages: list[dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,

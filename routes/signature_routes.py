@@ -43,7 +43,7 @@ def _normalize_signature_png(raw: str) -> str:
     try:
         payload = base64.b64decode(b64, validate=True)
     except Exception:
-        raise HTTPException(400, "Signature data must be base64-encoded PNG bytes")
+        raise HTTPException(400, "Signature data must be base64-encoded PNG bytes") from None
     if not payload:
         raise HTTPException(400, "Signature PNG is empty")
     if len(payload) > _MAX_SIGNATURE_BYTES:
@@ -123,7 +123,7 @@ def setup_signature_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error(f"Failed to save signature: {e}")
-            raise HTTPException(500, f"Failed to save signature: {e}")
+            raise HTTPException(500, f"Failed to save signature: {e}") from e
         finally:
             db.close()
 
@@ -144,7 +144,7 @@ def setup_signature_routes() -> APIRouter:
             raise
         except Exception as e:
             db.rollback()
-            raise HTTPException(500, f"Failed to delete signature: {e}")
+            raise HTTPException(500, f"Failed to delete signature: {e}") from e
         finally:
             db.close()
 
