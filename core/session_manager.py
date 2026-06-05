@@ -212,7 +212,7 @@ class SessionManager:
                 return
 
             msg_id = str(uuid.uuid4())
-            msg_time = datetime.utcnow()
+            msg_time = datetime.now(UTC).replace(tzinfo=None)
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))

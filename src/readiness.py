@@ -8,7 +8,7 @@ for an orchestrator readiness probe (200 only when every critical check passes).
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict
 
 
@@ -57,5 +57,5 @@ def check_readiness() -> dict[str, object]:
         "ready": ready,
         "version": APP_VERSION,
         "checks": checks,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat(),
     }

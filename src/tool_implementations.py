@@ -1081,7 +1081,7 @@ async def do_manage_endpoints(content: str, owner: str | None = None) -> dict:
             from datetime import datetime
             ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
                                api_key=api_key, is_enabled=True,
-                               created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+                               created_at=datetime.now(UTC).replace(tzinfo=None), updated_at=datetime.now(UTC).replace(tzinfo=None))
             db.add(ep)
             db.commit()
             return {"response": f"Added endpoint '{name or base_url}' (id: {eid})", "exit_code": 0}
@@ -1163,7 +1163,7 @@ async def do_manage_mcp(content: str, owner: str | None = None) -> dict:
             srv = McpServer(id=sid, name=name, transport="stdio", command=command,
                             args=json.dumps(cmd_args) if isinstance(cmd_args, list) else cmd_args,
                             env=json.dumps(env) if isinstance(env, dict) else env,
-                            is_enabled=True, created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+                            is_enabled=True, created_at=datetime.now(UTC).replace(tzinfo=None), updated_at=datetime.now(UTC).replace(tzinfo=None))
             db.add(srv)
             db.commit()
         finally:
@@ -1302,7 +1302,7 @@ async def do_manage_webhooks(content: str, owner: str | None = None) -> dict:
             wid = str(_uuid.uuid4())[:8]
             hook = Webhook(id=wid, name=name or url, url=url,
                            events=events, is_active=True,
-                           created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+                           created_at=datetime.now(UTC).replace(tzinfo=None), updated_at=datetime.now(UTC).replace(tzinfo=None))
             db.add(hook)
             db.commit()
             return {"response": f"Added webhook '{name or url}'", "exit_code": 0}
@@ -1365,7 +1365,7 @@ async def do_manage_tokens(content: str, owner: str | None = None) -> dict:
             tid = str(_uuid.uuid4())[:8]
             t = ApiToken(id=tid, name=name, token_hash=token_hash,
                          token_prefix=raw_token[:8], is_active=True,
-                         created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+                         created_at=datetime.now(UTC).replace(tzinfo=None), updated_at=datetime.now(UTC).replace(tzinfo=None))
             db.add(t)
             db.commit()
             return {"response": f"Created token '{name}'", "token": raw_token, "exit_code": 0}
@@ -1415,7 +1415,7 @@ async def do_manage_documents(content: str, owner: str | None = None) -> dict:
         if not ts:
             return 'never'
         try:
-            now = datetime.now(UTC) if ts.tzinfo is not None else datetime.utcnow()
+            now = datetime.now(UTC) if ts.tzinfo is not None else datetime.now(UTC).replace(tzinfo=None)
             diff = (now - ts).total_seconds()
         except Exception:
             return 'unknown'
@@ -2142,7 +2142,7 @@ async def do_manage_calendar(content: str, owner: str | None = None) -> dict:
                                   all_day: bool, minutes_before: int,
                                   is_utc: bool = False) -> tuple[str | None, str | None]:
         remind_at = dtstart - timedelta(minutes=minutes_before)
-        now = datetime.utcnow() if is_utc else datetime.now()
+        now = datetime.now(UTC).replace(tzinfo=None) if is_utc else datetime.now()
         if dtstart <= now:
             return None, "event already passed"
         if remind_at <= now:
@@ -2198,7 +2198,7 @@ async def do_manage_calendar(content: str, owner: str | None = None) -> dict:
                 if args.get("start"):
                     start_dt = _parse_dt(args["start"])
                 else:
-                    start_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                    start_dt = datetime.now(UTC).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
                 if args.get("end"):
                     end_dt = _parse_dt(args["end"])
                 else:

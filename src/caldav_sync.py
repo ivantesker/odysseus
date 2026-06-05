@@ -250,8 +250,8 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
             result["errors"].append(f"No calendars and URL fallback failed: {e}")
             return result
 
-    start = datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)
-    end = datetime.utcnow() + timedelta(days=_LOOKAHEAD_DAYS)
+    start = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=_LOOKBACK_DAYS)
+    end = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=_LOOKAHEAD_DAYS)
 
     db = SessionLocal()
     try:

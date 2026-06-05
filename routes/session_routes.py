@@ -3,7 +3,7 @@ import re
 import html
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from fastapi import APIRouter, Form, HTTPException, Response, Request
 import logging
 
@@ -166,7 +166,7 @@ def _persist_session_headers(session_id: str, headers: dict | None) -> None:
         db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
         if db_session:
             db_session.headers = headers or {}
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
             db.commit()
     except Exception:
         db.rollback()
@@ -457,7 +457,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.folder = folder if folder else None
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
                     db.commit()
                     result["folder"] = folder if folder else None
             finally:
@@ -504,7 +504,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     db_session.model = model
                     db_session.endpoint_url = endpoint_url
                     db_session.headers = session.headers or {}
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
                     db.commit()
             finally:
                 db.close()
@@ -630,7 +630,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.archived = True
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
                     db.commit()
 
                     # Update in memory if it exists
@@ -664,7 +664,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             if not db_session:
                 raise HTTPException(404, f"Session {sid} not found")
             db_session.archived = False
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
             db.commit()
             # Reload into session manager so it appears in the active list
             try:
@@ -849,7 +849,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == session_id).first()
                 if db_session:
                     db_session.is_important = important
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
                     db.commit()
 
                     # Update in memory if it exists
@@ -937,7 +937,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             metadata={
                 "compacted": True,
                 "summarized_count": len(older),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat(),
             },
         )
         new_history = [summary_msg] + recent
@@ -1200,7 +1200,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db_session = db.query(DbSession).filter(DbSession.id == sid, DbSession.owner == user).first()
                 if db_session:
                     db_session.folder = folder_name
-                    db_session.updated_at = datetime.utcnow()
+                    db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
                     updated += 1
             db.commit()
         except Exception as e:
