@@ -518,17 +518,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     async def inject_messages(request: Request, sid: str):
         """Bulk-inject messages into a session's history (for group chat sync)."""
         _verify_session_owner(request, sid)
-        try:
-            sess = session_manager.get_session(sid)
-        except KeyError:
-            raise HTTPException(404, f"Session {sid} not found") from None
         body = await request.json()
-        messages = body.get("messages", [])
-        from core.models import ChatMessage
-        for m in messages:
-            sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
-        session_manager.save_sessions()
-        return {"ok": True, "count": len(messages)}
+        try:
+            count = session_service.inject_messages(session_manager, sid, body.get("messages", []))
+        except SessionNotFoundError:
+            raise HTTPException(404, f"Session {sid} not found") from None
+        return {"ok": True, "count": count}
 
     @router.post("/session/{sid}/delete")
     def delete_session_beacon(request: Request, sid: str):
@@ -538,7 +533,6 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.post("/sessions/bulk-delete")
     async def bulk_delete_sessions(request: Request):
         """Delete multiple sessions (for compare cleanup via sendBeacon)."""
-        from core.database import ChatMessage as _CM
         try:
             body = await request.json()
             ids = body.get("ids", [])
@@ -547,16 +541,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
-                session_manager.delete_session(sid)
-                db = SessionLocal()
-                try:
-                    db.query(_CM).filter(_CM.session_id == sid).delete()
-                    db.query(DbSession).filter(DbSession.id == sid).delete()
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                finally:
-                    db.close()
+                session_service.purge_session(session_manager, sid)
             except Exception:
                 pass
         return {"deleted": len(ids)}
@@ -565,34 +550,23 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     def delete_session(request: Request, sid: str):
         """Permanently delete a session and all its messages."""
         _verify_session_owner(request, sid, session_manager)
+        # Block deletion of starred/favorited sessions.
+        if session_service.session_is_important(sid):
+            raise HTTPException(
+                status_code=403,
+                detail={"error": "SESSION_STARRED", "message": "Unstar the session before deleting it"}
+            )
         try:
-            # Block deletion of starred/favorited sessions
-            db = SessionLocal()
-            try:
-                db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
-                if db_sess and db_sess.is_important:
-                    raise HTTPException(
-                        status_code=403,
-                        detail={"error": "SESSION_STARRED", "message": "Unstar the session before deleting it"}
-                    )
-            finally:
-                db.close()
-
-            # Delete the session and all its messages
-            if session_manager.delete_session(sid):
+            if session_service.purge_session(session_manager, sid):
                 return {"status": "deleted"}
-            else:
-                raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found")
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error deleting session {sid}: {e}")
             raise HTTPException(
                 status_code=500,
-                detail={
-                    "error": "SESSION_DELETE_ERROR",
-                    "message": "Failed to delete session"
-                }
+                detail={"error": "SESSION_DELETE_ERROR", "message": "Failed to delete session"},
             ) from e
 
     @router.delete("/sessions/all")
@@ -600,23 +574,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         """Admin only: permanently delete ALL sessions and their messages."""
         from core.middleware import require_admin
         require_admin(request)
-
-        db = SessionLocal()
         try:
-            from core.database import ChatMessage as DbChatMessage
-            count = db.query(DbSession).count()
-            db.query(DbChatMessage).delete()
-            db.query(DbSession).delete()
-            db.commit()
-            session_manager.sessions.clear()
-            logger.info(f"Admin deleted all {count} sessions")
+            count = session_service.delete_all_sessions(session_manager)
             return {"status": "deleted", "count": count}
         except Exception as e:
-            db.rollback()
             logger.error(f"Error deleting all sessions: {e}")
             raise HTTPException(500, "Failed to delete sessions") from e
-        finally:
-            db.close()
 
     @router.post("/session/{sid}/archive")
     def archive_session(request: Request, sid: str):

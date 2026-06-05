@@ -74,6 +74,70 @@ def unarchive_session(session_manager, sid: str) -> dict:
         db.close()
 
 
+def purge_session(session_manager, sid: str) -> bool:
+    """Delete a session everywhere: manager + its DB rows. Returns found-ness.
+
+    Used by both single and bulk delete; ownership is checked by the caller.
+    """
+    from core.database import ChatMessage as _CM
+
+    found = bool(session_manager.delete_session(sid))
+    db = SessionLocal()
+    try:
+        db.query(_CM).filter(_CM.session_id == sid).delete()
+        db.query(DbSession).filter(DbSession.id == sid).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+    return found
+
+
+def session_is_important(sid: str) -> bool:
+    """True if the session is starred/important (delete is then blocked)."""
+    db = SessionLocal()
+    try:
+        row = db.query(DbSession).filter(DbSession.id == sid).first()
+        return bool(row and row.is_important)
+    finally:
+        db.close()
+
+
+def delete_all_sessions(session_manager) -> int:
+    """Delete every session + all chat messages. Returns the count removed."""
+    from core.database import ChatMessage as _CM
+
+    db = SessionLocal()
+    try:
+        count = db.query(DbSession).count()
+        db.query(_CM).delete()
+        db.query(DbSession).delete()
+        db.commit()
+        session_manager.sessions.clear()
+        logger.info("Deleted all %d sessions", count)
+        return count
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def inject_messages(session_manager, sid: str, messages: list[dict]) -> int:
+    """Append messages to a session's history. Returns how many were added."""
+    from core.models import ChatMessage
+
+    try:
+        sess = session_manager.get_session(sid)
+    except KeyError:
+        raise SessionNotFoundError(sid) from None
+    for m in messages:
+        sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
+    session_manager.save_sessions()
+    return len(messages)
+
+
 _ARCHIVED_SORT_KEYS = ("recent", "oldest", "most-messages", "alpha")
 
 

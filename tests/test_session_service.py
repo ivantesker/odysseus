@@ -105,3 +105,84 @@ def test_list_archived_model_filter_is_contains():
     _seed("alice", archived=True, model="claude-3")
     res = session_service.list_archived_sessions("alice", model="gpt-4")
     assert {s["model"] for s in res["sessions"]} == {"openai/gpt-4", "gpt-4o"}
+
+
+class _DelManager:
+    def __init__(self, found=True):
+        self.sessions = {}
+        self._found = found
+        self.deleted = []
+
+    def delete_session(self, sid):
+        self.deleted.append(sid)
+        return self._found
+
+
+def test_purge_session_removes_db_row_and_calls_manager():
+    sid = _seed()
+    mgr = _DelManager(found=True)
+    assert session_service.purge_session(mgr, sid) is True
+    assert mgr.deleted == [sid]
+    db = _TS()
+    try:
+        assert db.query(DbSession).filter(DbSession.id == sid).first() is None
+    finally:
+        db.close()
+
+
+def test_session_is_important():
+    sid = _seed()
+    assert session_service.session_is_important(sid) is False
+    db = _TS()
+    try:
+        db.query(DbSession).filter(DbSession.id == sid).first().is_important = True
+        db.commit()
+    finally:
+        db.close()
+    assert session_service.session_is_important(sid) is True
+
+
+def test_delete_all_sessions_counts_and_clears():
+    _seed("alice")
+    _seed("bob")
+    mgr = _DelManager()
+    mgr.sessions = {"x": object()}
+    assert session_service.delete_all_sessions(mgr) == 2
+    assert mgr.sessions == {}
+    db = _TS()
+    try:
+        assert db.query(DbSession).count() == 0
+    finally:
+        db.close()
+
+
+def test_inject_messages_appends_and_counts():
+    captured = []
+
+    class _S:
+        history = []
+        def add_message(self, m):
+            captured.append(m)
+
+    class _Mgr:
+        def __init__(self):
+            self.saved = False
+        def get_session(self, sid):
+            return _S()
+        def save_sessions(self):
+            self.saved = True
+
+    mgr = _Mgr()
+    n = session_service.inject_messages(mgr, "s1", [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "yo", "metadata": {"x": 1}},
+    ])
+    assert n == 2 and mgr.saved and len(captured) == 2
+
+
+def test_inject_messages_missing_session():
+    class _Mgr:
+        def get_session(self, sid):
+            raise KeyError(sid)
+    with pytest.raises(SessionNotFoundError):
+        session_service.inject_messages(_Mgr(), "nope", [])
