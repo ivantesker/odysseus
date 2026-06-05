@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import Request, HTTPException
 
 
-def get_current_user(request: Request) -> Optional[str]:
+def get_current_user(request: Request) -> str | None:
     """Get current username from request state (set by auth middleware)."""
     return getattr(request.state, 'current_user', None)
 

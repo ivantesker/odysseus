@@ -402,7 +402,7 @@ def setup_codex_routes(
             )
             try:
                 stdout_b, stderr_b = await _asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except _asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 return {"exit_code": -1, "stdout": "", "stderr": "timed out"}
             return {

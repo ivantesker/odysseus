@@ -36,7 +36,7 @@ def log_to_assistant(
     content: str,
     role: str = "assistant",
     *,
-    category: Optional[str] = None,
+    category: str | None = None,
 ):
     """Legacy no-op.
 

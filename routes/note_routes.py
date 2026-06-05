@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from core.database import SessionLocal, Note
 from src.auth_helpers import get_current_user
 from sqlalchemy.orm.attributes import flag_modified
+from datetime import UTC
 
 logger = logging.getLogger(__name__)
 
@@ -22,41 +23,41 @@ logger = logging.getLogger(__name__)
 
 class NoteCreate(BaseModel):
     title: str = ""
-    content: Optional[str] = None
-    items: Optional[list] = None
+    content: str | None = None
+    items: list | None = None
     note_type: str = "note"
-    color: Optional[str] = None
-    label: Optional[str] = None
+    color: str | None = None
+    label: str | None = None
     pinned: bool = False
-    due_date: Optional[str] = None
+    due_date: str | None = None
     source: str = "user"
-    session_id: Optional[str] = None
-    image_url: Optional[str] = None
-    repeat: Optional[str] = "none"
-    sort_order: Optional[int] = None
+    session_id: str | None = None
+    image_url: str | None = None
+    repeat: str | None = "none"
+    sort_order: int | None = None
 
 
 class NoteUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
-    items: Optional[list] = None
-    note_type: Optional[str] = None
-    color: Optional[str] = None
-    label: Optional[str] = None
-    pinned: Optional[bool] = None
-    archived: Optional[bool] = None
-    due_date: Optional[str] = None
-    image_url: Optional[str] = None
-    repeat: Optional[str] = None
-    sort_order: Optional[int] = None
-    agent_session_id: Optional[str] = None
+    title: str | None = None
+    content: str | None = None
+    items: list | None = None
+    note_type: str | None = None
+    color: str | None = None
+    label: str | None = None
+    pinned: bool | None = None
+    archived: bool | None = None
+    due_date: str | None = None
+    image_url: str | None = None
+    repeat: str | None = None
+    sort_order: int | None = None
+    agent_session_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _note_to_dict(note: Note) -> Dict[str, Any]:
+def _note_to_dict(note: Note) -> dict[str, Any]:
     items = None
     if note.items:
         try:
@@ -154,12 +155,12 @@ async def dispatch_reminder(
                     last = last.get("at")
                 last_dt = _dt.fromisoformat(str(last))
                 if last_dt.tzinfo is None:
-                    last_dt = last_dt.replace(tzinfo=_tz.utc)
+                    last_dt = last_dt.replace(tzinfo=UTC)
                 # Legacy cache values were plain timestamps and could be
                 # written by the frontend even when the email/ntfy send failed.
                 # Treat those as browser-only dedupe so email reminders can be
                 # retried by the backend scanner after a failed frontend path.
-                should_skip = last_dt >= _dt.now(_tz.utc) - _td(minutes=25)
+                should_skip = last_dt >= _dt.now(UTC) - _td(minutes=25)
                 if should_skip and channel in ("email", "ntfy"):
                     should_skip = last_channel == channel
                 if should_skip:
@@ -433,7 +434,7 @@ async def dispatch_reminder(
                 _cache = {}
             sent_channel = "email" if email_sent else "ntfy" if ntfy_sent else "browser"
             _cache[cache_key or str(note_id)] = {
-                "at": _dt.now(_tz.utc).isoformat(),
+                "at": _dt.now(UTC).isoformat(),
                 "channel": sent_channel,
             }
             _STATE.write_text(_json.dumps(_cache), encoding="utf-8")
@@ -464,15 +465,15 @@ def setup_note_routes(task_scheduler=None):
 
     router = APIRouter(prefix="/api/notes", tags=["notes"])
 
-    def _owner(request: Request) -> Optional[str]:
+    def _owner(request: Request) -> str | None:
         return get_current_user(request)
 
     # --- LIST ---
     @router.get("")
     def list_notes(
         request: Request,
-        archived: Optional[bool] = None,
-        label: Optional[str] = None,
+        archived: bool | None = None,
+        label: str | None = None,
     ):
         user = _owner(request)
         db = SessionLocal()

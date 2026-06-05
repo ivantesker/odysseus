@@ -1,7 +1,7 @@
 import os
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
@@ -16,7 +16,7 @@ Base = declarative_base()
 
 def utcnow_naive() -> datetime:
     """Return naive UTC for existing DateTime columns."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class TimestampMixin:
@@ -24,7 +24,7 @@ class TimestampMixin:
     @declared_attr
     def created_at(cls):
         return Column(DateTime, default=utcnow_naive, nullable=False)
-    
+
     @declared_attr
     def updated_at(cls):
         return Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
@@ -96,26 +96,26 @@ class Session(TimestampMixin, Base):
     Represents a chat session with its configuration and metadata.
     """
     __tablename__ = "sessions"
-    
+
     # Primary key
     id = Column(String, primary_key=True, index=True)
-    
+
     # Session metadata
     name = Column(String, nullable=False)
     endpoint_url = Column(String, nullable=False)
     model = Column(String, nullable=False)
     owner = Column(String, nullable=True, index=True)  # username; null = legacy/shared
-    
+
     # Configuration flags
     rag = Column(Boolean, default=False)
     archived = Column(Boolean, default=False)
 
     # Organization
     folder = Column(String, nullable=True, default=None)
-    
+
     # Headers stored as JSON
     headers = Column(JSON, default=dict)
-    
+
     # Timestamps are provided by TimestampMixin
     last_accessed = Column(DateTime, default=func.now(), onupdate=func.now())
     # Timestamp of the last actual MESSAGE in this session. Set explicitly
@@ -124,14 +124,14 @@ class Session(TimestampMixin, Base):
     # opening the chat (all of which bump updated_at and last_accessed).
     # The "Last active" sort uses this.
     last_message_at = Column(DateTime, nullable=True, default=None)
-    
-    
+
+
     # Indexes - optimized composites
     __table_args__ = (
         Index('ix_sessions_active', 'archived', 'last_accessed'),
         Index('ix_sessions_search', 'name', 'archived'),
     )
-    
+
     # Properties
     is_important = Column(Boolean, default=False)
     message_count = Column(Integer, default=0)
@@ -142,12 +142,12 @@ class Session(TimestampMixin, Base):
 
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
-    
+
     @property
     def is_active(self):
         """Check if session is active (not archived)"""
         return not self.archived
-    
+
     def to_dict(self):
         """Convert session to dictionary for JSON serialization"""
         return {
@@ -175,13 +175,13 @@ class ChatMessage(Base):
     Represents individual chat messages within a session.
     """
     __tablename__ = "chat_messages"
-    
+
     # Primary key - using String to support UUIDs
     id = Column(String, primary_key=True, index=True)
-    
+
     # Foreign key to Session
     session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
-    
+
     # Message content
     role = Column(String, nullable=False)
     content = Column(Text, nullable=False)
@@ -189,10 +189,10 @@ class ChatMessage(Base):
 
     # Timestamp
     timestamp = Column(DateTime, default=utcnow_naive)
-    
+
     # Relationship to Session
     session = relationship("Session", back_populates="messages")
-    
+
     # Indexes - optimized composite
     __table_args__ = (
         Index('ix_messages_session_time', 'session_id', 'timestamp'),  # Composite for efficient message retrieval
@@ -641,13 +641,13 @@ class Memory(Base):
     Represents persistent memory entries with metadata.
     """
     __tablename__ = "memories"
-    
+
     # Primary key
     id = Column(String, primary_key=True, index=True)
-    
+
     # Memory content
     text = Column(Text, nullable=False)
-    
+
     # Categorization
     category = Column(String, default='fact')
     source = Column(String, default='user')
@@ -1079,7 +1079,7 @@ def _migrate_assign_legacy_owner():
         auth_path = os.path.join("data", "auth.json")
     admin_user = None
     try:
-        with open(auth_path, "r", encoding="utf-8") as f:
+        with open(auth_path, encoding="utf-8") as f:
             auth_data = _json.load(f)
         users = auth_data.get("users", {})
         if users:
@@ -1132,7 +1132,7 @@ def _migrate_assign_legacy_owner():
     mem_path = os.path.join("data", "memory.json")
     try:
         if os.path.exists(mem_path):
-            with open(mem_path, "r", encoding="utf-8") as f:
+            with open(mem_path, encoding="utf-8") as f:
                 memories = _json.load(f)
             changed = False
             for m in memories:
@@ -1150,7 +1150,7 @@ def _migrate_assign_legacy_owner():
     prefs_path = os.path.join("data", "user_prefs.json")
     try:
         if os.path.exists(prefs_path):
-            with open(prefs_path, "r", encoding="utf-8") as f:
+            with open(prefs_path, encoding="utf-8") as f:
                 prefs = _json.load(f)
             if "_users" not in prefs and prefs:
                 # Flat format → nest under admin user
@@ -1830,7 +1830,7 @@ def get_db():
         db.close()
 
 from contextlib import contextmanager
-from typing import Generator
+from collections.abc import Generator
 
 @contextmanager
 def get_db_session() -> Generator:
@@ -1864,16 +1864,16 @@ def bulk_insert_messages(session_id: str, messages: list):
 def cleanup_old_sessions(days: int = 30):
     """Remove sessions older than specified days"""
     from datetime import timedelta
-    
+
     with get_db_session() as db:
         cutoff_date = utcnow_naive() - timedelta(days=days)
-        
+
         deleted_count = db.query(Session).filter(
             Session.archived == True,
             Session.last_accessed < cutoff_date,
             Session.is_important == False
         ).delete()
-        
+
         return deleted_count
 
 def get_session_stats():
@@ -1891,18 +1891,18 @@ def get_session_stats():
 def get_detailed_stats():
     """Get comprehensive database statistics including file size"""
     stats = get_session_stats()  # Use existing function
-    
+
     # Add database file size
     db_size_mb = 0.0
     if "sqlite" in DATABASE_URL:
         db_path = DATABASE_URL.replace("sqlite:///", "")
         if not os.path.isabs(db_path):
             db_path = os.path.abspath(db_path)
-        
+
         if os.path.exists(db_path):
             db_size = os.path.getsize(db_path)
             db_size_mb = round(db_size / (1024 * 1024), 2)
-    
+
     stats['database_size_mb'] = db_size_mb
     return stats
 

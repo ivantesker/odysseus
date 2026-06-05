@@ -23,7 +23,7 @@ UNTRUSTED_CONTEXT_HEADER = (
 )
 
 
-def untrusted_context_message(label: str, content: Any) -> Dict[str, Any]:
+def untrusted_context_message(label: str, content: Any) -> dict[str, Any]:
     """Return an LLM message that keeps retrieved/source text out of system role."""
     text = "" if content is None else str(content)
     return {

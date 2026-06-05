@@ -40,7 +40,7 @@ def _owned_endpoint_by_url(db, base_url, owner):
 
 class RecordVoteRequest(BaseModel):
     prompt: str
-    models: List[str]
+    models: list[str]
     winner: str           # model name or "tie"
     is_blind: bool = True
 

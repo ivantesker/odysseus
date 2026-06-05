@@ -32,9 +32,9 @@ REDIRECT_URI = f"{_REDIRECT_BASE}/api/mcp/oauth/callback"
 # How long the background connect waits for the user to authorize before giving up.
 AUTH_WAIT_SECONDS = 300
 
-_pending: Dict[str, asyncio.Future] = {}   # state -> Future[(code, state)]
-_pending_ts: Dict[str, float] = {}         # state -> monotonic timestamp, for pruning
-_auth_urls: Dict[str, str] = {}            # server_id -> authorization URL
+_pending: dict[str, asyncio.Future] = {}   # state -> Future[(code, state)]
+_pending_ts: dict[str, float] = {}         # state -> monotonic timestamp, for pruning
+_auth_urls: dict[str, str] = {}            # server_id -> authorization URL
 
 
 def _prune_stale() -> None:
@@ -49,7 +49,7 @@ def _prune_stale() -> None:
             fut.cancel()
 
 
-def _discard_pending(state: Optional[str]) -> None:
+def _discard_pending(state: str | None) -> None:
     if state is None:
         return
     _pending.pop(state, None)
@@ -72,7 +72,7 @@ def resolve_pending(state: str, code: str) -> bool:
     return False
 
 
-def pop_auth_url(server_id: str) -> Optional[str]:
+def pop_auth_url(server_id: str) -> str | None:
     return _auth_urls.get(server_id)
 
 
@@ -171,7 +171,7 @@ def build_provider(server_id: str, url: str, on_redirect=None):
                 logger.warning(f"MCP OAuth on_redirect callback failed: {e}")
         logger.info(f"MCP OAuth: server {server_id} awaiting authorization (state={state})")
 
-    async def callback_handler() -> Tuple[str, Optional[str]]:
+    async def callback_handler() -> tuple[str, str | None]:
         auth_url = _auth_urls.get(server_id)
         state = (parse_qs(urlparse(auth_url).query).get("state") or [None])[0] if auth_url else None
         fut = _pending.get(state)

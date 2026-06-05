@@ -49,7 +49,7 @@ def _format_probe_failure(model: str, exc: Exception) -> str:
     return f"Cannot reach model '{model}' — check that the endpoint is running and accessible."
 
 
-def _research_json_path(session_id: str) -> Optional[Path]:
+def _research_json_path(session_id: str) -> Path | None:
     if not isinstance(session_id, str) or not _RESEARCH_SESSION_ID_RE.fullmatch(session_id):
         return None
     root = RESEARCH_DATA_DIR.resolve()
@@ -66,7 +66,7 @@ class ResearchHandler:
 
     def __init__(self):
         self._legacy_engine = None
-        self._active_tasks: Dict[str, dict] = {}
+        self._active_tasks: dict[str, dict] = {}
         self._initialize_legacy_engine()
         RESEARCH_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -171,7 +171,7 @@ class ResearchHandler:
 
     async def generate_plan(
         self, query: str, llm_endpoint: str, llm_model: str, llm_headers: dict = None,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Generate a research plan for user review before starting research."""
         try:
             from src.deep_research import RESEARCH_PLAN_PROMPT, current_date_context
@@ -336,7 +336,7 @@ class ResearchHandler:
                     _guarded_complete(session_id, result, sources, findings)
                 except Exception as cb_err:
                     logger.error(f"on_complete callback failed: {cb_err}")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(f"Research hard timeout ({hard_timeout}s) for session {session_id}")
                 entry["status"] = "error"
                 # If we have partial results, save what we have
@@ -369,7 +369,7 @@ class ResearchHandler:
         entry["task"] = task
         return {"session_id": session_id, "status": "running", "query": query}
 
-    def get_status(self, session_id: str) -> Optional[dict]:
+    def get_status(self, session_id: str) -> dict | None:
         """Get current research status for a session."""
         avg = self.get_avg_duration()
         if session_id in self._active_tasks:
@@ -418,7 +418,7 @@ class ResearchHandler:
         entry["status"] = "cancelled"
         return True
 
-    def get_result(self, session_id: str) -> Optional[str]:
+    def get_result(self, session_id: str) -> str | None:
         """Get the completed research result."""
         if session_id in self._active_tasks:
             entry = self._active_tasks[session_id]
@@ -438,7 +438,7 @@ class ResearchHandler:
                 pass
         return None
 
-    def get_sources(self, session_id: str) -> Optional[list]:
+    def get_sources(self, session_id: str) -> list | None:
         """Get deduplicated source list from research findings."""
         # Check in-memory first
         if session_id in self._active_tasks:
@@ -460,7 +460,7 @@ class ResearchHandler:
                 pass
         return None
 
-    def get_raw_findings(self, session_id: str) -> Optional[list]:
+    def get_raw_findings(self, session_id: str) -> list | None:
         """Get raw per-source findings for display."""
         if session_id in self._active_tasks:
             entry = self._active_tasks[session_id]
@@ -519,7 +519,7 @@ class ResearchHandler:
             logger.warning(f"Failed to extract raw findings: {e}")
             return []
 
-    def get_avg_duration(self) -> Optional[float]:
+    def get_avg_duration(self) -> float | None:
         """Compute average research duration from completed results on disk."""
         durations = []
         try:
@@ -596,7 +596,7 @@ class ResearchHandler:
         except Exception as e:
             logger.error(f"Failed to save research result: {e}")
 
-    def _get_session_json(self, session_id: str) -> Optional[dict]:
+    def _get_session_json(self, session_id: str) -> dict | None:
         """Load the saved research JSON for a session, if it exists."""
         path = _research_json_path(session_id)
         if path is None:
@@ -608,7 +608,7 @@ class ResearchHandler:
                 pass
         return None
 
-    def get_report_html(self, session_id: str) -> Optional[str]:
+    def get_report_html(self, session_id: str) -> str | None:
         """Generate the visual HTML report for a session (always fresh from JSON)."""
         json_path = _research_json_path(session_id)
         if json_path is None:

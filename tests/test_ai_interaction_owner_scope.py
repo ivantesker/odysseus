@@ -12,7 +12,7 @@ def _source(fn) -> str:
 def test_model_resolver_applies_owner_filter():
     body = _source(ai_interaction._resolve_model)
 
-    assert "owner: Optional[str] = None" in body
+    assert "owner: str | None = None" in body
     assert "from src.auth_helpers import owner_filter" in body
     assert "owner_filter(query, ModelEndpoint, owner)" in body
 
@@ -21,7 +21,7 @@ def test_model_listing_and_image_fallback_are_owner_scoped():
     list_body = _source(ai_interaction.do_list_models)
     image_body = _source(ai_interaction.do_generate_image)
 
-    assert "owner: Optional[str] = None" in list_body
+    assert "owner: str | None = None" in list_body
     assert "owner_filter(query, ModelEndpoint, owner)" in list_body
     assert "_resolve_model(candidate, owner=owner)" in image_body
     assert "owner_filter(_img_q, ModelEndpoint, owner)" in image_body

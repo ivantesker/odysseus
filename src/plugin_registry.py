@@ -32,16 +32,17 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
-_TOOLS: Dict[str, Dict[str, Any]] = {}
-_ACTIONS: Dict[str, Callable] = {}
-_ROUTERS: List[Any] = []
+_TOOLS: dict[str, dict[str, Any]] = {}
+_ACTIONS: dict[str, Callable] = {}
+_ROUTERS: list[Any] = []
 
 
-def register_tool(name: str, *, schema: Dict[str, Any] | None = None) -> Callable:
+def register_tool(name: str, *, schema: dict[str, Any] | None = None) -> Callable:
     """Register an agent tool. `schema` is an optional JSON-schema for args."""
     def deco(fn: Callable) -> Callable:
         _TOOLS[name] = {"fn": fn, "schema": schema or {}}
@@ -74,15 +75,15 @@ def register_route(target):
     return target
 
 
-def registered_tools() -> Dict[str, Dict[str, Any]]:
+def registered_tools() -> dict[str, dict[str, Any]]:
     return dict(_TOOLS)
 
 
-def registered_actions() -> Dict[str, Callable]:
+def registered_actions() -> dict[str, Callable]:
     return dict(_ACTIONS)
 
 
-def registered_routers() -> List[Any]:
+def registered_routers() -> list[Any]:
     return list(_ROUTERS)
 
 

@@ -6,7 +6,8 @@ import os
 import time
 import logging
 from datetime import datetime
-from typing import Dict, Any, AsyncGenerator, List
+from typing import Dict, Any, List
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
@@ -43,7 +44,7 @@ from src.action_intents import classify_tool_intent as _classify_tool_intent
 logger = logging.getLogger(__name__)
 
 # Track active streams for partial-save safety net
-_active_streams: Dict[str, dict] = {}
+_active_streams: dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 
 
@@ -266,8 +267,8 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     # POST /api/chat (non-streaming)
     # ------------------------------------------------------------------ #
-    @router.post("/api/chat", response_model=Dict[str, str])
-    async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, str]:
+    @router.post("/api/chat", response_model=dict[str, str])
+    async def chat_endpoint(request: Request, chat_request: ChatRequest) -> dict[str, str]:
         _set_user_time_from_request(request)
 
         message = chat_request.message
@@ -1157,7 +1158,7 @@ def setup_chat_routes(
     # no longer stops it (it's detached), so the Stop button must call this.
     # ------------------------------------------------------------------ #
     @router.post("/api/chat/stop/{session_id}")
-    async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
+    async def chat_stop(request: Request, session_id: str) -> dict[str, Any]:
         _verify_session_owner(request, session_id)
         stopped = agent_runs.stop(session_id)
         return {"stopped": stopped}
@@ -1166,7 +1167,7 @@ def setup_chat_routes(
     # GET /api/chat/stream_status — check if a stream is active for a session
     # ------------------------------------------------------------------ #
     @router.get("/api/chat/stream_status/{session_id}")
-    async def chat_stream_status(request: Request, session_id: str) -> Dict[str, Any]:
+    async def chat_stream_status(request: Request, session_id: str) -> dict[str, Any]:
         _verify_session_owner(request, session_id)
         # A detached run can still be going even if _active_streams was popped;
         # report it as active so the client knows to reconnect via /resume.
@@ -1184,7 +1185,7 @@ def setup_chat_routes(
     # POST /api/inject_context
     # ------------------------------------------------------------------ #
     @router.post("/api/inject_context/{session_id}")
-    async def inject_context(request: Request, session_id: str, context: str = Form(...)) -> Dict[str, str]:
+    async def inject_context(request: Request, session_id: str, context: str = Form(...)) -> dict[str, str]:
         _verify_session_owner(request, session_id)
         try:
             sess = session_manager.get_session(session_id)
@@ -1203,7 +1204,7 @@ def setup_chat_routes(
         request: Request,
         q: str = Query("", min_length=0),
         limit: int = Query(20, ge=1, le=100),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not q or not q.strip():
             return []
 

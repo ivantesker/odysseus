@@ -29,7 +29,7 @@ import logging
 import os
 import socket
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, UTC
 from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ def _to_utc_naive(dt):
     All-day events stay as date and get widened to datetime here."""
     if isinstance(dt, datetime):
         if dt.tzinfo is not None:
-            return dt.astimezone(timezone.utc).replace(tzinfo=None), False
+            return dt.astimezone(UTC).replace(tzinfo=None), False
         return dt, False  # naive → treat as local
     # date-only (all-day)
     return datetime(dt.year, dt.month, dt.day), True

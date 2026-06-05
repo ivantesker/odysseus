@@ -218,7 +218,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.get("/api/research/library")
     async def research_library(
         request: Request,
-        search: Optional[str] = Query(None),
+        search: str | None = Query(None),
         sort: str = Query("recent"),
         limit: int = Query(50),
         archived: bool = Query(False),
@@ -337,13 +337,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         query: str
         # max_rounds=0 means "Auto" — let the AI decide when to stop, capped at 20.
         max_rounds: int = Field(default=0, ge=0, le=20)
-        search_provider: Optional[str] = None
-        endpoint_id: Optional[str] = None
-        model: Optional[str] = None
+        search_provider: str | None = None
+        endpoint_id: str | None = None
+        model: str | None = None
         max_time: int = Field(default=300, ge=60, le=1800)
-        extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
-        extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
-        category: Optional[str] = None
+        extraction_timeout: int | None = Field(default=None, ge=15, le=3600)
+        extraction_concurrency: int | None = Field(default=None, ge=1, le=12)
+        category: str | None = None
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):

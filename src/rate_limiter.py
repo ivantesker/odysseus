@@ -18,7 +18,7 @@ class RateLimiter:
     def __init__(self, max_requests: int, window_seconds: int):
         self.max_requests = max_requests
         self.window = window_seconds
-        self._log: Dict[str, List[float]] = {}
+        self._log: dict[str, list[float]] = {}
         self._lock = threading.Lock()
         self._last_cleanup = time.monotonic()
         self._cleanup_interval = max(window_seconds * 2, 120)

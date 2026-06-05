@@ -18,7 +18,7 @@ import ast
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Generator
+from collections.abc import Generator
 from unittest.mock import MagicMock
 
 

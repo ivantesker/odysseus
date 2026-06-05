@@ -16,7 +16,7 @@ def web_ui_enabled() -> bool:
     return os.getenv("SERVE_WEB_UI", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
-def _features() -> Dict[str, Any]:
+def _features() -> dict[str, Any]:
     try:
         from src.settings import load_features
         return load_features() or {}
@@ -36,9 +36,9 @@ def _count_table(model_cls) -> int:
         return 0
 
 
-def _model_subsystem() -> Dict[str, Any]:
+def _model_subsystem() -> dict[str, Any]:
     """Configured model endpoints + cached model count (no live probe)."""
-    info: Dict[str, Any] = {"endpoints": 0, "models": 0}
+    info: dict[str, Any] = {"endpoints": 0, "models": 0}
     try:
         from core.database import SessionLocal, ModelEndpoint
         db = SessionLocal()
@@ -68,7 +68,7 @@ def _rag_available() -> bool:
         return False
 
 
-def build_capabilities() -> Dict[str, Any]:
+def build_capabilities() -> dict[str, Any]:
     """Assemble the capabilities report from config + cheap DB counts."""
     from core.constants import APP_VERSION
 

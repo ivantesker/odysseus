@@ -26,7 +26,7 @@ class ResearchHandler:
 
     def __init__(self):
         self._legacy_engine = None
-        self._active_tasks: Dict[str, dict] = {}
+        self._active_tasks: dict[str, dict] = {}
         self._initialize_legacy_engine()
         RESEARCH_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -102,7 +102,7 @@ class ResearchHandler:
         entry["task"] = task
         return {"session_id": session_id, "status": "running", "query": query}
 
-    def get_status(self, session_id: str) -> Optional[dict]:
+    def get_status(self, session_id: str) -> dict | None:
         """Get current research status for a session."""
         if session_id in self._active_tasks:
             entry = self._active_tasks[session_id]
@@ -143,7 +143,7 @@ class ResearchHandler:
         entry["status"] = "cancelled"
         return True
 
-    def get_result(self, session_id: str) -> Optional[str]:
+    def get_result(self, session_id: str) -> str | None:
         """Get the completed research result."""
         if session_id in self._active_tasks:
             entry = self._active_tasks[session_id]
@@ -159,7 +159,7 @@ class ResearchHandler:
                 pass
         return None
 
-    def get_sources(self, session_id: str) -> Optional[list]:
+    def get_sources(self, session_id: str) -> list | None:
         """Get deduplicated source list from research findings."""
         # Check in-memory first
         if session_id in self._active_tasks:
@@ -372,9 +372,7 @@ class ResearchHandler:
         # Build expandable collected info section
         collected_section = ""
         if evolving_report or raw_findings_section:
-            collected_section = "\n<details>\n<summary><strong>Raw collected findings ({} sources)</strong></summary>\n\n".format(
-                len(findings) if findings else 0
-            )
+            collected_section = f"\n<details>\n<summary><strong>Raw collected findings ({len(findings) if findings else 0} sources)</strong></summary>\n\n"
             if raw_findings_section:
                 collected_section += raw_findings_section + "\n"
             collected_section += "\n</details>\n"

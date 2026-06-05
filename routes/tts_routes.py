@@ -36,7 +36,7 @@ def setup_tts_routes(tts_service):
                     status_code=503,
                     detail={"message": "TTS service not available"}
                 )
-            
+
             if request.format == "base64":
                 audio_b64 = tts_service.synthesize_to_base64(request.text)
                 if not audio_b64:
@@ -45,7 +45,7 @@ def setup_tts_routes(tts_service):
                         detail={"message": "Synthesis failed"}
                     )
                 return {"audio": audio_b64}
-            
+
             else:  # audio format
                 audio_data = tts_service.synthesize(request.text)
                 if not audio_data:
@@ -53,7 +53,7 @@ def setup_tts_routes(tts_service):
                         status_code=500,
                         detail={"message": "Synthesis failed"}
                     )
-                
+
                 # Detect format from magic bytes (MP3: ID3 tag or sync word ff e0+)
                 is_mp3 = audio_data[:3] == b'ID3' or (len(audio_data) >= 2 and audio_data[0] == 0xff and (audio_data[1] & 0xe0) == 0xe0)
                 mime = "audio/mpeg" if is_mp3 else "audio/wav"
@@ -64,7 +64,7 @@ def setup_tts_routes(tts_service):
                         "Content-Disposition": "inline; filename=speech.mp3" if "mpeg" in mime else "inline; filename=speech.wav"
                     }
                 )
-        
+
         except HTTPException:
             raise
         except Exception as e:

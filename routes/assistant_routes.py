@@ -21,22 +21,22 @@ from src.task_scheduler import compute_next_run
 
 class CheckInUpdate(BaseModel):
     id: str                               # ScheduledTask.id
-    name: Optional[str] = None
-    scheduled_time: Optional[str] = None  # "HH:MM"
-    prompt: Optional[str] = None
-    enabled: Optional[bool] = None        # maps to status "active"/"paused"
+    name: str | None = None
+    scheduled_time: str | None = None  # "HH:MM"
+    prompt: str | None = None
+    enabled: bool | None = None        # maps to status "active"/"paused"
 
 
 class AssistantSettingsUpdate(BaseModel):
-    name: Optional[str] = None
-    avatar: Optional[str] = None
-    personality: Optional[str] = None
-    model: Optional[str] = None
-    endpoint_url: Optional[str] = None
-    enabled_tools: Optional[list[str]] = None
-    allow_autonomous_email: Optional[bool] = None  # convenience toggle
-    timezone: Optional[str] = None
-    check_ins: Optional[list[CheckInUpdate]] = None
+    name: str | None = None
+    avatar: str | None = None
+    personality: str | None = None
+    model: str | None = None
+    endpoint_url: str | None = None
+    enabled_tools: list[str] | None = None
+    allow_autonomous_email: bool | None = None  # convenience toggle
+    timezone: str | None = None
+    check_ins: list[CheckInUpdate] | None = None
 
 
 _EMAIL_TOOLS = {"send_email", "reply_to_email"}

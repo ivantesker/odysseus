@@ -16,7 +16,7 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 
-def extract_urls(text: str) -> List[str]:
+def extract_urls(text: str) -> list[str]:
     """Extract URLs from text using regex pattern."""
     url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
     urls = re.findall(url_pattern, text)
@@ -76,7 +76,7 @@ _PROVIDER_FINGERPRINT_TTL = 60.0
 _lmstudio_models_cache: dict = {}
 
 
-def _is_local_host(host: Optional[str]) -> bool:
+def _is_local_host(host: str | None) -> bool:
     """True for loopback/LAN/Tailscale hosts (never public domains)."""
     host = (host or "").lower()
     if not host:
@@ -92,7 +92,7 @@ def _is_local_host(host: Optional[str]) -> bool:
     return ip in ipaddress.ip_network("100.64.0.0/10")
 
 
-def _probe_lmstudio_models(url: str) -> Optional[list]:
+def _probe_lmstudio_models(url: str) -> list | None:
     """Return LM Studio's native /api/v1/models list, or None when the endpoint
     isn't LM Studio or is unreachable (short-TTL cached; transient errors uncached)."""
     parsed = urlparse(url)
@@ -123,7 +123,7 @@ def _probe_lmstudio_models(url: str) -> Optional[list]:
     return models
 
 
-def lmstudio_supports_vision(url: str, model: str) -> Optional[bool]:
+def lmstudio_supports_vision(url: str, model: str) -> bool | None:
     """Read `model`'s capabilities.vision flag from LM Studio, or None when the
     endpoint isn't LM Studio or doesn't report it (so callers fall back)."""
     if not model:
@@ -209,7 +209,7 @@ def validate_file_upload(file: UploadFile) -> UploadFile:
                     "message": "File size exceeds 10MB limit"
                 }
             )
-    except IOError as e:
+    except OSError as e:
         logger.error(f"Error reading file size for {file.filename}: {e}")
         raise HTTPException(
             status_code=500,

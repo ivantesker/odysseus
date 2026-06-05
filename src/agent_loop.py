@@ -12,7 +12,8 @@ import json
 import re
 import time
 import logging
-from typing import AsyncGenerator, List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set
+from collections.abc import AsyncGenerator
 from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
@@ -38,10 +39,10 @@ from src.agent_tools import (
 logger = logging.getLogger(__name__)
 
 
-def _load_mcp_disabled_map() -> Dict[str, set]:
+def _load_mcp_disabled_map() -> dict[str, set]:
     """Load per-server disabled tool sets from the database."""
     from core.database import McpServer, SessionLocal
-    disabled_map: Dict[str, set] = {}
+    disabled_map: dict[str, set] = {}
     db = SessionLocal()
     try:
         for srv in db.query(McpServer).all():
@@ -497,10 +498,10 @@ def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
     return parsed.port == 11434 and (path == "/v1" or path.startswith("/v1/"))
 
 
-def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
+def _endpoint_lookup_keys(endpoint_url: str) -> list[str]:
     """Candidate ModelEndpoint.base_url keys for a runtime chat URL."""
     raw = (endpoint_url or "").strip()
-    keys: List[str] = []
+    keys: list[str] = []
 
     def add(value: str):
         value = (value or "").strip()
@@ -536,7 +537,7 @@ _ADMIN_KEYWORDS = [
     "note", "notes", "todo", "todos", "reminder", "reminders",
 ]
 
-def _detect_admin_intent(messages: List[Dict]) -> bool:
+def _detect_admin_intent(messages: list[dict]) -> bool:
     """Check if the last user message suggests admin/management tool usage."""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -548,7 +549,7 @@ def _detect_admin_intent(messages: List[Dict]) -> bool:
     return False
 
 
-def _extract_last_user_message(messages: List[Dict]) -> str:
+def _extract_last_user_message(messages: list[dict]) -> str:
     """Return the most recent user message as plain text."""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -559,7 +560,7 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
-def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
+def _recent_context_for_retrieval(messages: list[dict], max_user: int = 3, max_chars: int = 600) -> str:
     """Build the tool-retrieval query from the last few USER turns, not just
     the latest one.
 
@@ -586,17 +587,17 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
     return "\n".join(collected)[:max_chars]
 
 def _build_system_prompt(
-    messages: List[Dict],
+    messages: list[dict],
     model: str,
     active_document,
     mcp_mgr,
-    disabled_tools: Optional[Set[str]] = None,
+    disabled_tools: set[str] | None = None,
     needs_admin: bool = False,
-    relevant_tools: Optional[Set[str]] = None,
-    mcp_disabled_map: Optional[Dict[str, set]] = None,
+    relevant_tools: set[str] | None = None,
+    mcp_disabled_map: dict[str, set] | None = None,
     compact: bool = False,
-    owner: Optional[str] = None,
-) -> List[Dict]:
+    owner: str | None = None,
+) -> list[dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
 
@@ -1117,7 +1118,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
 
 
 def _append_tool_results(
-    messages: List[Dict],
+    messages: list[dict],
     round_response: str,
     native_tool_calls: list,
     tool_results: list,
@@ -1193,7 +1194,7 @@ def _append_tool_results(
 
 
 def _compute_final_metrics(
-    messages: List[Dict],
+    messages: list[dict],
     full_response: str,
     total_duration: float,
     time_to_first_token,
@@ -1205,7 +1206,7 @@ def _compute_final_metrics(
     round_texts: list,
     model: str = "",
     last_round_input_tokens: int = 0,
-    prep_timings: Optional[Dict[str, float]] = None,
+    prep_timings: dict[str, float] | None = None,
     backend_gen_tps: float = 0,
     backend_prefill_tps: float = 0,
 ) -> dict:
@@ -1416,23 +1417,23 @@ def build_active_plan_note(approved_plan: str) -> str:
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
-    messages: List[Dict],
-    headers: Optional[Dict] = None,
+    messages: list[dict],
+    headers: dict | None = None,
     temperature: float = 0.3,
     max_tokens: int = 4096,
-    prompt_type: Optional[str] = None,
+    prompt_type: str | None = None,
     max_rounds: int = MAX_AGENT_ROUNDS,
     max_tool_calls: int = 0,
     context_length: int = 0,
     active_document=None,
-    session_id: Optional[str] = None,
-    disabled_tools: Optional[Set[str]] = None,
-    owner: Optional[str] = None,
-    relevant_tools: Optional[Set[str]] = None,
-    fallbacks: Optional[List[tuple]] = None,
-    workspace: Optional[str] = None,
+    session_id: str | None = None,
+    disabled_tools: set[str] | None = None,
+    owner: str | None = None,
+    relevant_tools: set[str] | None = None,
+    fallbacks: list[tuple] | None = None,
+    workspace: str | None = None,
     plan_mode: bool = False,
-    approved_plan: Optional[str] = None,
+    approved_plan: str | None = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1447,7 +1448,7 @@ async def stream_agent_loop(
     """
 
     mcp_mgr = get_mcp_manager()
-    prep_timings: Dict[str, float] = {}
+    prep_timings: dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
@@ -1496,7 +1497,7 @@ async def stream_agent_loop(
                             asyncio.to_thread(tool_idx.index_mcp_tools, mcp_mgr, _mcp_disabled_map),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "[tool-rag] MCP tool indexing exceeded %.1fs; continuing without reindex",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
@@ -1508,7 +1509,7 @@ async def stream_agent_loop(
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                         logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "[tool-rag] Retrieval exceeded %.1fs; falling back to always-available tools",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
@@ -1549,7 +1550,7 @@ async def stream_agent_loop(
     # serve command — `--enable-auto-tool-choice` flips it on. UI can
     # also toggle per endpoint). NULL = unknown; for local Ollama /v1 we
     # default to fenced tools, otherwise fall through to keyword + host checks.
-    _endpoint_supports: Optional[bool] = None
+    _endpoint_supports: bool | None = None
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
         _db = _SL()

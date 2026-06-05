@@ -44,10 +44,10 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-_extra_bundle_path: Optional[str] = (os.environ.get("LLM_CA_BUNDLE") or "").strip() or None
+_extra_bundle_path: str | None = (os.environ.get("LLM_CA_BUNDLE") or "").strip() or None
 
 
-def _build_ssl_context() -> Optional[ssl.SSLContext]:
+def _build_ssl_context() -> ssl.SSLContext | None:
     """Build an SSLContext that uses the default trust store and ALSO trusts
     the operator-supplied PEM bundle. Returns None when no extra bundle is
     configured, so callers fall through to httpx's default verify=True."""
@@ -80,7 +80,7 @@ def _build_ssl_context() -> Optional[ssl.SSLContext]:
 # Resolved once at import time. The httpx clients in src/llm_core.py are
 # long-lived (process-wide), so editing LLM_CA_BUNDLE requires a restart —
 # matching the existing semantics of LLM_HOST, SEARXNG_INSTANCE, etc.
-_SHARED_SSL_CONTEXT: Optional[ssl.SSLContext] = _build_ssl_context()
+_SHARED_SSL_CONTEXT: ssl.SSLContext | None = _build_ssl_context()
 
 
 def llm_verify():

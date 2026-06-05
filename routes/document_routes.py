@@ -2,7 +2,7 @@
 
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
@@ -43,7 +43,7 @@ from routes.document_helpers import (
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
 
-    def _locate_current_user_upload(request: Request, upload_id: str, user: Optional[str]):
+    def _locate_current_user_upload(request: Request, upload_id: str, user: str | None):
         if upload_handler is None:
             return None
         auth_manager = getattr(getattr(request.app, "state", None), "auth_manager", None)
@@ -59,7 +59,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document ----
     @router.post("/api/document")
-    async def create_document(request: Request, req: DocumentCreate) -> Dict[str, Any]:
+    async def create_document(request: Request, req: DocumentCreate) -> dict[str, Any]:
         from src.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_documents")
         db = SessionLocal()
@@ -144,8 +144,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     async def import_pdf(
         request: Request,
         file: UploadFile = File(...),
-        session_id: Optional[str] = Form(None),
-    ) -> Dict[str, Any]:
+        session_id: str | None = Form(None),
+    ) -> dict[str, Any]:
         """Upload a PDF and create the matching Document.
 
         Detects AcroForm fields — if any, creates a form-backed markdown doc
@@ -249,13 +249,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.get("/api/documents/library")
     async def documents_library(
         request: Request,
-        search: Optional[str] = Query(None),
-        language: Optional[str] = Query(None),
+        search: str | None = Query(None),
+        language: str | None = Query(None),
         sort: str = Query("recent"),
         offset: int = Query(0, ge=0),
         limit: int = Query(20, ge=1, le=50),
         archived: bool = Query(False),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -353,7 +353,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/documents/{session_id} ----
     @router.get("/api/documents/{session_id}")
-    async def list_documents(request: Request, session_id: str) -> List[Dict[str, Any]]:
+    async def list_documents(request: Request, session_id: str) -> list[dict[str, Any]]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -377,7 +377,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id} ----
     @router.get("/api/document/{doc_id}")
-    async def get_document(request: Request, doc_id: str) -> Dict[str, Any]:
+    async def get_document(request: Request, doc_id: str) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -391,7 +391,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/archive — soft-archive / restore ----
     @router.post("/api/document/{doc_id}/archive")
-    async def archive_document(request: Request, doc_id: str, archived: bool = Query(True)) -> Dict[str, Any]:
+    async def archive_document(request: Request, doc_id: str, archived: bool = Query(True)) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -407,7 +407,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/extract-pdf-text ----
     @router.post("/api/document/{doc_id}/extract-pdf-text")
-    async def extract_pdf_text(request: Request, doc_id: str) -> Dict[str, Any]:
+    async def extract_pdf_text(request: Request, doc_id: str) -> dict[str, Any]:
         """Re-run pypdf+VL text extraction against the PDF linked to this doc
         and merge the result into the doc's markdown content. Idempotent — the
         existing body (everything below the title heading) is replaced.
@@ -530,7 +530,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     VERSION_COALESCE_SECONDS = 60
 
     @router.put("/api/document/{doc_id}")
-    async def update_document(request: Request, doc_id: str, req: DocumentUpdate) -> Dict[str, Any]:
+    async def update_document(request: Request, doc_id: str, req: DocumentUpdate) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -550,12 +550,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 DocumentVersion.document_id == doc_id,
             ).order_by(DocumentVersion.version_number.desc()).first()
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             coalesced = False
             if latest_ver and latest_ver.source == "user":
                 ver_time = latest_ver.created_at
                 if ver_time.tzinfo is None:
-                    ver_time = ver_time.replace(tzinfo=timezone.utc)
+                    ver_time = ver_time.replace(tzinfo=UTC)
                 age = (now - ver_time).total_seconds()
                 if age < VERSION_COALESCE_SECONDS:
                     # Update the existing version in-place
@@ -592,7 +592,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- PATCH /api/document/{doc_id} — metadata only ----
     @router.patch("/api/document/{doc_id}")
-    async def patch_document(request: Request, doc_id: str, req: DocumentPatch) -> Dict[str, Any]:
+    async def patch_document(request: Request, doc_id: str, req: DocumentPatch) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -629,7 +629,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- DELETE /api/document/{doc_id} — soft delete ----
     @router.delete("/api/document/{doc_id}")
-    async def delete_document(request: Request, doc_id: str) -> Dict[str, str]:
+    async def delete_document(request: Request, doc_id: str) -> dict[str, str]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -657,7 +657,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id}/versions ----
     @router.get("/api/document/{doc_id}/versions")
-    async def list_versions(request: Request, doc_id: str) -> List[Dict[str, Any]]:
+    async def list_versions(request: Request, doc_id: str) -> list[dict[str, Any]]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -681,7 +681,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id}/version/{num} ----
     @router.get("/api/document/{doc_id}/version/{num}")
-    async def get_version(request: Request, doc_id: str, num: int) -> Dict[str, Any]:
+    async def get_version(request: Request, doc_id: str, num: int) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -701,7 +701,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/restore/{num} ----
     @router.post("/api/document/{doc_id}/restore/{num}")
-    async def restore_version(request: Request, doc_id: str, num: int) -> Dict[str, Any]:
+    async def restore_version(request: Request, doc_id: str, num: int) -> dict[str, Any]:
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -742,7 +742,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/documents/tidy — clean up broken/empty documents ----
     @router.post("/api/documents/tidy")
-    async def tidy_documents(request: Request) -> Dict[str, Any]:
+    async def tidy_documents(request: Request) -> dict[str, Any]:
         """Fix empty titles and remove broken/empty documents (user's docs only)."""
         user = get_current_user(request)
         db = SessionLocal()
@@ -845,7 +845,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/documents/ai-tidy — AI-powered cleanup of junk/test documents ----
     @router.post("/api/documents/ai-tidy")
-    async def ai_tidy_documents(request: Request) -> Dict[str, Any]:
+    async def ai_tidy_documents(request: Request) -> dict[str, Any]:
         """Use AI to judge if documents are junk/test/accidental, then delete them.
         Caches verdicts so previously-reviewed docs are skipped."""
         from src.task_endpoint import resolve_task_endpoint
@@ -942,7 +942,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/export-pdf/preview ----
     @router.post("/api/document/{doc_id}/export-pdf/preview")
-    async def export_pdf_preview(doc_id: str, request: Request) -> Dict[str, Any]:
+    async def export_pdf_preview(doc_id: str, request: Request) -> dict[str, Any]:
         """Return the field-value mapping that would be written to the PDF.
 
         Frontend shows this in a confirmation modal so the user can spot/fix
@@ -1004,7 +1004,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- GET /api/document/{doc_id}/render-pages ----
     @router.get("/api/document/{doc_id}/render-pages")
-    async def render_pages(doc_id: str, request: Request) -> Dict[str, Any]:
+    async def render_pages(doc_id: str, request: Request) -> dict[str, Any]:
         """Return per-page metadata for the interactive PDF view.
 
         Each page entry has its rendered-image dimensions (matching what
@@ -1033,7 +1033,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             values = parse_markdown_to_values(doc.current_content or "")
 
             # Group fields by page
-            by_page: Dict[int, list] = {}
+            by_page: dict[int, list] = {}
             for f in schema:
                 by_page.setdefault(f["page"], []).append(f)
 
@@ -1116,7 +1116,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     # ---- POST /api/document/{doc_id}/ai-fill-annotations ----
     @router.post("/api/document/{doc_id}/ai-fill-annotations")
-    async def ai_fill_annotations(doc_id: str, request: Request) -> Dict[str, Any]:
+    async def ai_fill_annotations(doc_id: str, request: Request) -> dict[str, Any]:
         """Ask a vision-capable LLM to locate fillable areas on a flat PDF and
         propose annotation values for each, given a free-form user instruction.
 

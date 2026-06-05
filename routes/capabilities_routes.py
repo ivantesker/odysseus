@@ -21,7 +21,7 @@ router = APIRouter()
 
 def setup_capabilities_routes(model_discovery=None):
     @router.get("/api/v1/capabilities")
-    def capabilities() -> Dict[str, Any]:
+    def capabilities() -> dict[str, Any]:
         return build_capabilities()
 
     return router

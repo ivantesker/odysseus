@@ -154,7 +154,7 @@ def save_field_sidecar(pdf_path: str, fields: list[dict[str, Any]]) -> str:
     return path
 
 
-def load_field_sidecar(pdf_path: str) -> Optional[list[dict[str, Any]]]:
+def load_field_sidecar(pdf_path: str) -> list[dict[str, Any]] | None:
     """Return field schema for a PDF, or None if no sidecar exists."""
     path = sidecar_path(pdf_path)
     if not os.path.exists(path):
@@ -167,7 +167,7 @@ def load_field_sidecar(pdf_path: str) -> Optional[list[dict[str, Any]]]:
         return None
 
 
-def find_source_upload_id(content: str) -> Optional[str]:
+def find_source_upload_id(content: str) -> str | None:
     """Return the upload_id from the doc's front-matter pointer, or None.
 
     Matches both the form-source marker (`pdf_form_source`) used for fillable
@@ -186,7 +186,7 @@ def find_source_upload_id(content: str) -> Optional[str]:
     return upload_id
 
 
-def render_plain_pdf_markdown(upload_id: str, title: str, body_text: Optional[str] = None) -> str:
+def render_plain_pdf_markdown(upload_id: str, title: str, body_text: str | None = None) -> str:
     """Build the markdown wrapper for a non-form PDF imported into the editor.
 
     The hidden front-matter pointer links the doc to the source PDF so the
@@ -210,8 +210,8 @@ def create_plain_pdf_document(
     session_id: str,
     upload_id: str,
     title: str,
-    body_text: Optional[str] = None,
-) -> Optional[str]:
+    body_text: str | None = None,
+) -> str | None:
     """Create a markdown Document for a non-form PDF and set it active.
 
     Returns the new doc_id, or None on failure. Pairs with `find_source_upload_id`
@@ -348,7 +348,7 @@ def render_form_as_markdown(
     fields: list[dict[str, Any]],
     upload_id: str,
     title: str,
-    intro_text: Optional[str] = None,
+    intro_text: str | None = None,
 ) -> str:
     """Build the markdown document the user edits in the editor.
 
@@ -368,7 +368,7 @@ def render_form_as_markdown(
         "When done, click **Export PDF** to download the filled form.",
         "",
     ]
-    last_page: Optional[int] = None
+    last_page: int | None = None
     for f in fields:
         if f["page"] != last_page:
             lines.append("")
@@ -393,8 +393,8 @@ def create_form_markdown_document(
     fields: list[dict[str, Any]],
     upload_id: str,
     title: str,
-    intro_text: Optional[str] = None,
-) -> Optional[str]:
+    intro_text: str | None = None,
+) -> str | None:
     """Create a markdown Document for an editable form and set it active.
 
     Returns the new doc_id, or None on failure. The Document's language is

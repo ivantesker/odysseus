@@ -24,7 +24,7 @@ import html
 from html.parser import HTMLParser as _HTMLParser
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 
 from email.mime.text import MIMEText
@@ -881,7 +881,7 @@ def setup_email_routes():
                         # deterministic across hosts.
                         if parsed_date and parsed_date.tzinfo is None:
                             from datetime import timezone as _tz
-                            parsed_date = parsed_date.replace(tzinfo=_tz.utc)
+                            parsed_date = parsed_date.replace(tzinfo=UTC)
                         iso_date = parsed_date.isoformat() if parsed_date else ""
                         date_epoch = parsed_date.timestamp() if parsed_date else 0.0
                         is_read = "\\Seen" in flags
@@ -1118,7 +1118,7 @@ def setup_email_routes():
                         parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
                         if parsed_date and parsed_date.tzinfo is None:
                             from datetime import timezone as _tz
-                            parsed_date = parsed_date.replace(tzinfo=_tz.utc)
+                            parsed_date = parsed_date.replace(tzinfo=UTC)
                         iso_date = parsed_date.isoformat() if parsed_date else ""
                         date_epoch = parsed_date.timestamp() if parsed_date else 0.0
                         ct = msg.get("Content-Type", "")
@@ -1985,7 +1985,7 @@ def setup_email_routes():
                 parsed_at = _dt.fromisoformat(send_at.replace("Z", "+00:00"))
             except ValueError:
                 return {"success": False, "error": "send_at must be ISO8601"}
-            now_utc = _dt.now(_tz.utc) if parsed_at.tzinfo else _dt.utcnow()
+            now_utc = _dt.now(UTC) if parsed_at.tzinfo else _dt.utcnow()
             # Tiny 30s grace so a user clicking Send right at the chosen
             # minute doesn't trip the past-time guard.
             if parsed_at < now_utc:
@@ -1997,7 +1997,7 @@ def setup_email_routes():
             # hours early, and a "Z" suffix compares after the fractional
             # seconds of the poller timestamp.
             if parsed_at.tzinfo:
-                parsed_at = parsed_at.astimezone(_tz.utc).replace(tzinfo=None)
+                parsed_at = parsed_at.astimezone(UTC).replace(tzinfo=None)
             send_at = parsed_at.isoformat()
 
             sid = _uuid.uuid4().hex[:16]

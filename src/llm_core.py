@@ -25,17 +25,17 @@ class LLMConfig:
 
 
 # Cache for LLM responses
-def _get_cache_key(url: str, model: str, messages: List[Dict], 
+def _get_cache_key(url: str, model: str, messages: list[dict],
                    temperature: float, max_tokens: int) -> str:
     """Generate cache key for LLM requests."""
     hashable_messages = []
     for msg in messages:
         sorted_items = tuple(sorted(msg.items()))
         hashable_messages.append(sorted_items)
-    
+
     content = json.dumps({
         'url': url,
-        'model': model, 
+        'model': model,
         'messages': hashable_messages,
         'temp': temperature,
         'max_tokens': max_tokens
@@ -57,15 +57,15 @@ _response_cache = {}
 #   - any success resets the failure counter immediately
 DEAD_HOST_COOLDOWN = 20.0
 _HOST_FAIL_THRESHOLD = 2
-_dead_hosts: Dict[str, float] = {}
-_host_fails: Dict[str, int] = {}
+_dead_hosts: dict[str, float] = {}
+_host_fails: dict[str, int] = {}
 # Guards the two maps above. The synchronous llm_call() runs inside FastAPI's
 # threadpool (sync routes such as /sessions/auto-sort) while llm_call_async()
 # runs on the event loop, so these maps are mutated from multiple OS threads.
 # Without the lock the get()+1+set on _host_fails is a read-modify-write that
 # loses failure counts under concurrent connect errors (issue #659).
 _host_health_lock = threading.Lock()
-_model_activity: Dict[str, float] = {}
+_model_activity: dict[str, float] = {}
 
 _HARMONY_MARKER_RE = re.compile(
     r"<\|channel\|>(analysis|final)"
@@ -107,19 +107,19 @@ class _HarmonyStreamRouter:
     def __init__(self) -> None:
         self._buf = ""
         self._seen_harmony = False
-        self._channel: Optional[str] = None
+        self._channel: str | None = None
         self._in_message = False
 
-    def feed(self, text: str) -> List[Tuple[str, bool]]:
+    def feed(self, text: str) -> list[tuple[str, bool]]:
         if not text:
             return []
         self._buf += text
         return self._drain(final=False)
 
-    def flush(self) -> List[Tuple[str, bool]]:
+    def flush(self) -> list[tuple[str, bool]]:
         return self._drain(final=True)
 
-    def _append_text(self, out: List[Tuple[str, bool]], text: str) -> None:
+    def _append_text(self, out: list[tuple[str, bool]], text: str) -> None:
         if not text:
             return
         if not self._seen_harmony:
@@ -141,8 +141,8 @@ class _HarmonyStreamRouter:
             if marker in {"<|end|>", "<|return|>", "<|call|>"}:
                 self._channel = None
 
-    def _drain(self, *, final: bool) -> List[Tuple[str, bool]]:
-        out: List[Tuple[str, bool]] = []
+    def _drain(self, *, final: bool) -> list[tuple[str, bool]]:
+        out: list[tuple[str, bool]] = []
         while True:
             match = _HARMONY_MARKER_RE.search(self._buf)
             if not match:
@@ -173,7 +173,7 @@ def note_model_activity(url: str, model: str):
         return
     _model_activity[_model_activity_key(url, model)] = time.time()
 
-def seconds_since_model_activity(url: str, model: str) -> Optional[float]:
+def seconds_since_model_activity(url: str, model: str) -> float | None:
     """Seconds since the endpoint/model was last used in this process."""
     ts = _model_activity.get(_model_activity_key(url, model))
     if not ts:
@@ -220,7 +220,7 @@ def _clear_host_dead(url: str) -> None:
 # Shared async HTTP client. Reusing one client keeps connections warm:
 # repeat calls to api.anthropic.com / api.openai.com / openrouter skip the
 # 100-500ms TCP+TLS handshake. Lazy init so we bind to the running event loop.
-_http_client: Optional[httpx.AsyncClient] = None
+_http_client: httpx.AsyncClient | None = None
 _http_limits = httpx.Limits(max_connections=100, max_keepalive_connections=30, keepalive_expiry=30.0)
 
 def _get_http_client() -> httpx.AsyncClient:
@@ -233,7 +233,7 @@ def _get_http_client() -> httpx.AsyncClient:
         )
     return _http_client
 
-def _get_cached_response(cache_key: str) -> Optional[str]:
+def _get_cached_response(cache_key: str) -> str | None:
     """Get cached response if it exists."""
     return _response_cache.get(cache_key)
 
@@ -287,7 +287,7 @@ def _normalize_ollama_url(url: str) -> str:
     return base.rstrip("/") + "/chat"
 
 
-def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
+def _ollama_normalize_tool_messages(messages: list[dict]) -> list[dict]:
     """Adapt Odysseus' canonical OpenAI-style messages to native Ollama /api/chat.
 
     Odysseus carries assistant tool calls in the OpenAI shape, where
@@ -299,7 +299,7 @@ def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
     Gemini `extra_content` (thought_signature) is dropped — it is meaningless to
     Ollama and only matters when the conversation is replayed to Gemini.
     """
-    out: List[Dict] = []
+    out: list[dict] = []
     for m in messages or []:
         tcs = m.get("tool_calls") if isinstance(m, dict) else None
         if not tcs:
@@ -314,7 +314,7 @@ def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
                     args = json.loads(args) if args.strip() else {}
                 except (json.JSONDecodeError, TypeError):
                     args = {}
-            call: Dict = {"function": {"name": fn.get("name", ""), "arguments": args or {}}}
+            call: dict = {"function": {"name": fn.get("name", ""), "arguments": args or {}}}
             if tc.get("id"):
                 call["id"] = tc["id"]
             new_calls.append(call)
@@ -326,13 +326,13 @@ def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
 
 def _build_ollama_payload(
     model: str,
-    messages: List[Dict],
+    messages: list[dict],
     temperature: float,
     max_tokens: int,
     stream: bool = False,
-    tools: Optional[List[Dict]] = None,
-    num_ctx: Optional[int] = None,
-) -> Dict:
+    tools: list[dict] | None = None,
+    num_ctx: int | None = None,
+) -> dict:
     """Build the JSON payload for Ollama's /api/chat endpoint.
 
     ``num_ctx`` sets the input context window. Ollama defaults to 2048
@@ -344,12 +344,12 @@ def _build_ollama_payload(
     don't guess for unknown models but do tell Ollama the real window
     when we know it — even if it's smaller than 2048.
     """
-    payload: Dict = {
+    payload: dict = {
         "model": model,
         "messages": _ollama_normalize_tool_messages(messages),
         "stream": stream,
     }
-    options: Dict = {}
+    options: dict = {}
     if temperature is not None:
         options["temperature"] = temperature
     if max_tokens and max_tokens > 0:
@@ -403,7 +403,7 @@ def _detect_provider(url: str) -> str:
     return "openai"
 
 
-def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
+def _provider_headers(provider: str, headers: dict | None = None) -> dict[str, str]:
     h = {"Content-Type": "application/json"}
     if isinstance(headers, dict):
         h.update(headers)
@@ -456,7 +456,7 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
             msg = f"{provider} denied access (403)"
         if detail:
             msg += f" — {detail}"
-        msg += ". Check Model Endpoints → {} and re-paste the key.".format(provider)
+        msg += f". Check Model Endpoints → {provider} and re-paste the key."
         return msg
     if status == 404:
         return f"{provider} returned 404 — check the base URL and model name." + (f" ({detail})" if detail else "")
@@ -502,7 +502,7 @@ def _supports_thinking(model: str) -> bool:
     m = model.lower()
     return any(p in m for p in _THINKING_MODEL_PATTERNS)
 
-def _as_content_blocks(content) -> List[Dict]:
+def _as_content_blocks(content) -> list[dict]:
     """Coerce a message `content` into a list of content blocks.
 
     A list (multimodal: text + image parts) passes through; a non-empty string
@@ -516,7 +516,7 @@ def _as_content_blocks(content) -> List[Dict]:
     return []
 
 
-def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
+def _sanitize_llm_messages(messages: list[dict]) -> list[dict]:
     """Strip Odysseus-only metadata before sending messages to providers.
 
     Per the OpenAI chat format: user/system messages must have content; a tool
@@ -557,7 +557,7 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     # "Messages with role 'tool' must be a response to a preceding message with
     # 'tool_calls'". Also strip unanswered assistant tool_calls; some providers
     # reject those as incomplete conversations.
-    repaired: List[Dict] = []
+    repaired: list[dict] = []
     i = 0
     while i < len(cleaned):
         msg = cleaned[i]
@@ -620,7 +620,7 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
 
     # Merge consecutive user messages to satisfy strict role alternation
     # requirements after invalid tool-call fragments have been removed.
-    merged: List[Dict] = []
+    merged: list[dict] = []
     for item in repaired:
         if not merged:
             merged.append(item)
@@ -666,7 +666,7 @@ def _model_list_base(url: str) -> str:
     return base
 
 
-def _parse_model_cache(raw) -> List[str]:
+def _parse_model_cache(raw) -> list[str]:
     if not raw:
         return []
     try:
@@ -686,7 +686,7 @@ def _parse_model_cache(raw) -> List[str]:
     return out
 
 
-def _configured_cached_model_ids(endpoint_url: str) -> List[str]:
+def _configured_cached_model_ids(endpoint_url: str) -> list[str]:
     """Return cached models for a configured endpoint matching endpoint_url."""
     target = _model_list_base(endpoint_url)
     if not target:
@@ -716,7 +716,7 @@ def _configured_cached_model_ids(endpoint_url: str) -> List[str]:
     return []
 
 
-def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT, headers: Optional[Dict] = None) -> List[str]:
+def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT, headers: dict | None = None) -> list[str]:
     """List available model IDs from an endpoint."""
     cached = _configured_cached_model_ids(base_chat_url)
     if cached:
@@ -752,7 +752,7 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
             pass
         return []
 
-def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT) -> Optional[str]:
+def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT) -> str | None:
     """Normalize a model ID to match available models."""
     avail = list_model_ids(endpoint_url, timeout)
     if not avail:
@@ -766,9 +766,9 @@ def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConf
             return a
     return None
 
-def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
-             max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
+def llm_call(url: str, model: str, messages: list[dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
+             max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: dict | None = None,
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: str | None = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -910,13 +910,13 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
 async def llm_call_async(
     url: str,
     model: str,
-    messages: List[Dict],
+    messages: list[dict],
     temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
     max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS,
-    headers: Optional[Dict] = None,
+    headers: dict | None = None,
     timeout: int = LLMConfig.STREAM_TIMEOUT,
     max_retries: int = LLMConfig.MAX_RETRIES,
-    prompt_type: Optional[str] = None
+    prompt_type: str | None = None
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -1015,10 +1015,10 @@ async def llm_call_async(
                 raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
             await asyncio.sleep(LLMConfig.RETRY_DELAY)
 
-async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
-                     max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
-                     timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None):
+async def stream_llm(url: str, model: str, messages: list[dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
+                     max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: dict | None = None,
+                     timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: str | None = None,
+                     tools: list[dict] | None = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1082,7 +1082,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
 
     # ── Native Ollama streaming ──
     if provider == "ollama":
-        _ollama_tool_calls: List[Dict] = []
+        _ollama_tool_calls: list[dict] = []
         _harmony_router = _HarmonyStreamRouter()
         try:
             client = _get_http_client()
@@ -1144,7 +1144,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
 
     # ── OpenAI-compatible streaming ──
     # Accumulate native tool_calls across streaming chunks
-    _tc_acc: Dict[int, Dict] = {}  # index -> {id, name, arguments}
+    _tc_acc: dict[int, dict] = {}  # index -> {id, name, arguments}
     _tc_last_idx = [-1]  # most-recently-touched slot, for providers that omit `index`
     # For thinking models: prepend <think> to first content delta so frontend
     # can detect thinking-in-progress (some models output </think> but no <think>)
@@ -1162,7 +1162,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         calls = [_tc_acc[i] for i in sorted(_tc_acc)]
         return f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
 
-    def _format_routed_content(parts: List[Tuple[str, bool]]) -> List[str]:
+    def _format_routed_content(parts: list[tuple[str, bool]]) -> list[str]:
         nonlocal _first_content_sent
         events = []
         for part, is_thinking in parts:
@@ -1389,7 +1389,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
 
 
-def _summarize_stream_error(err_chunk: Optional[str]) -> str:
+def _summarize_stream_error(err_chunk: str | None) -> str:
     """Pull a short human reason out of an `event: error` SSE chunk for the
     fallback notice. Returns a generic message if it can't be parsed."""
     if not err_chunk:

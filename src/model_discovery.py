@@ -15,17 +15,17 @@ class ModelDiscovery:
         # Custom ports from env vars, merged into the scan list by discover_models.
         self._extra_ports: set = set()
 
-    def _get_hosts(self) -> List[str]:
+    def _get_hosts(self) -> list[str]:
         """Get all hosts to scan, using env override, Tailscale, or default."""
         self._extra_ports = set()
 
-        def _append_host(out: List[str], host: str) -> None:
+        def _append_host(out: list[str], host: str) -> None:
             host = (host or "").strip()
             if not host or host in out:
                 return
             out.append(host)
 
-        def _append_env_hosts(out: List[str]) -> None:
+        def _append_env_hosts(out: list[str]) -> None:
             """Add hosts (and any custom ports) from provider-specific env vars."""
             for env_name in ("OLLAMA_BASE_URL", "OLLAMA_URL", "LM_STUDIO_URL"):
                 raw = os.getenv(env_name, "").strip()
@@ -57,7 +57,7 @@ class ModelDiscovery:
         _append_env_hosts(hosts)
         return hosts
 
-    def _fingerprint_provider(self, host: str, port: int) -> Optional[str]:
+    def _fingerprint_provider(self, host: str, port: int) -> str | None:
         """Identify the server software via its native API, independent of port."""
         try:
             r = httpx.get(f"http://{host}:{port}/api/v1/models", timeout=1.5)
@@ -71,7 +71,7 @@ class ModelDiscovery:
             pass
         return None
 
-    def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
+    def _check_port(self, host: str, port: int) -> dict[str, Any] | None:
         """Check a single host:port for models."""
         base = f"http://{host}:{port}/v1"
         try:
@@ -93,7 +93,7 @@ class ModelDiscovery:
             pass
         return None
 
-    def discover_models(self) -> Dict[str, List[Dict[str, Any]]]:
+    def discover_models(self) -> dict[str, list[dict[str, Any]]]:
         """Discover available models from all reachable hosts."""
         hosts = self._get_hosts()
         items = []
@@ -124,7 +124,7 @@ class ModelDiscovery:
         logger.info(f"Discovered {len(items)} model endpoints across {len(hosts)} hosts")
         return {"hosts": hosts, "items": items}
 
-    def get_providers(self) -> Dict[str, Any]:
+    def get_providers(self) -> dict[str, Any]:
         """Get all discovered local providers."""
         discovery = self.discover_models()
         items = discovery["items"]

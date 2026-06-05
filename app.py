@@ -139,7 +139,7 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
             return await call_next(request)
         try:
             return await _asyncio.wait_for(call_next(request), timeout=REQUEST_HARD_TIMEOUT)
-        except _asyncio.TimeoutError:
+        except TimeoutError:
             return _JSONResponse(
                 {"detail": f"Request exceeded {REQUEST_HARD_TIMEOUT:.0f}s timeout"},
                 status_code=504,
@@ -753,7 +753,7 @@ except Exception:
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     """Read an HTML file and inject the CSP nonce into inline <script> tags."""
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
@@ -826,7 +826,7 @@ async def get_version():
     return {"version": APP_VERSION}
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, str]:
+async def health_check() -> dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/api/ready")
@@ -841,11 +841,11 @@ async def readiness_check() -> JSONResponse:
     return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
 
 @app.get("/api/runtime")
-async def runtime_info() -> Dict[str, object]:
+async def runtime_info() -> dict[str, object]:
     in_docker = os.path.exists("/.dockerenv")
     if not in_docker:
         try:
-            with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as fh:
+            with open("/proc/1/cgroup", encoding="utf-8", errors="ignore") as fh:
                 cg = fh.read()
             in_docker = any(marker in cg for marker in ("docker", "containerd", "kubepods"))
         except Exception:
@@ -918,7 +918,7 @@ async def _startup_event():
             logger.warning(f"Built-in MCP registration failed (non-critical): {type(e).__name__}: {e}")
         try:
             await asyncio.wait_for(mcp_manager.connect_all_enabled(), timeout=20)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("User MCP startup timed out (non-critical)")
         except BaseException as e:
             logger.warning(f"MCP startup failed (non-critical): {type(e).__name__}: {e}")

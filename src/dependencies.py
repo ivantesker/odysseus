@@ -26,11 +26,11 @@ from fastapi import Depends, Request
 from src.auth_helpers import effective_user, get_current_user, require_user
 
 
-def _current_user(request: Request) -> Optional[str]:
+def _current_user(request: Request) -> str | None:
     return get_current_user(request)
 
 
-def _effective_user(request: Request) -> Optional[str]:
+def _effective_user(request: Request) -> str | None:
     return effective_user(request)
 
 

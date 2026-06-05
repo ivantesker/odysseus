@@ -115,7 +115,7 @@ _PLAN_MODE_KNOWN_MUTATORS = {
 }
 
 
-def plan_mode_disabled_tools() -> Set[str]:
+def plan_mode_disabled_tools() -> set[str]:
     """Tool names to add to the denylist in plan mode.
 
     Plan mode allows only PLAN_MODE_READONLY_TOOLS. The gate is a denylist, so
@@ -146,7 +146,7 @@ def plan_mode_disabled_tools() -> Set[str]:
     return (all_names | _PLAN_MODE_KNOWN_MUTATORS) - PLAN_MODE_READONLY_TOOLS
 
 
-def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
+def is_public_blocked_tool(tool_name: str | None) -> bool:
     """Return True when a non-admin/public user must not execute this tool.
 
     This is a security gate, so it fails CLOSED: a malformed non-string tool
@@ -161,7 +161,7 @@ def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
     return tool_name in NON_ADMIN_BLOCKED_TOOLS or tool_name.startswith("mcp__")
 
 
-def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
+def owner_is_admin_or_single_user(owner: str | None) -> bool:
     """Return True for admins, or when auth is not configured yet."""
     try:
         from core.auth import AuthManager
@@ -175,7 +175,7 @@ def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
         return False
 
 
-def blocked_tools_for_owner(owner: Optional[str]) -> Set[str]:
+def blocked_tools_for_owner(owner: str | None) -> set[str]:
     """Tools to hide/disable for this owner under public-user policy."""
     if owner_is_admin_or_single_user(owner):
         return set()

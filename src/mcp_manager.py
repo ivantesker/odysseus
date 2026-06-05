@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-def _format_mcp_connection_error(name: str, command: str = "", args: Optional[List[str]] = None, error: Exception = None) -> str:
+def _format_mcp_connection_error(name: str, command: str = "", args: list[str] | None = None, error: Exception = None) -> str:
     """Return a user-actionable MCP connection error message."""
     args = args or []
     raw_error = str(error) if error else "Unknown error"
@@ -100,7 +100,7 @@ _MCP_READONLY_VERBS = (
 )
 
 
-def mcp_tool_is_readonly(tool: Dict) -> bool:
+def mcp_tool_is_readonly(tool: dict) -> bool:
     """Classify an MCP tool as safe (non-mutating) for plan mode.
 
     Prefer the server's own annotations (readOnlyHint / destructiveHint). When
@@ -133,15 +133,15 @@ class McpManager:
 
     def __init__(self):
         # server_id -> connection state
-        self._connections: Dict[str, Dict[str, Any]] = {}
+        self._connections: dict[str, dict[str, Any]] = {}
         # server_id -> list of tool schemas
-        self._tools: Dict[str, List[Dict]] = {}
+        self._tools: dict[str, list[dict]] = {}
         # server_id -> MCP ClientSession
-        self._sessions: Dict[str, Any] = {}
+        self._sessions: dict[str, Any] = {}
         # server_id -> exit stack (for cleanup)
-        self._stacks: Dict[str, Any] = {}
+        self._stacks: dict[str, Any] = {}
         # server_id -> background connect task (HTTP transport / OAuth)
-        self._connect_tasks: Dict[str, Any] = {}
+        self._connect_tasks: dict[str, Any] = {}
         # Tracking updates to tools/connections for RAG indexing / prompt cache
         self._generation = 0
 
@@ -150,10 +150,10 @@ class McpManager:
         server_id: str,
         name: str,
         transport: str,
-        command: Optional[str] = None,
-        args: Optional[List[str]] = None,
-        env: Optional[Dict[str, str]] = None,
-        url: Optional[str] = None,
+        command: str | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        url: str | None = None,
     ) -> bool:
         """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
         try:
@@ -176,7 +176,7 @@ class McpManager:
             self._generation += 1
             return False
 
-    async def _connect_stdio(self, server_id: str, name: str, command: str, args: List[str], env: Dict[str, str]) -> bool:
+    async def _connect_stdio(self, server_id: str, name: str, command: str, args: list[str], env: dict[str, str]) -> bool:
         """Connect to an MCP server via stdio transport."""
         try:
             from mcp import ClientSession, StdioServerParameters
@@ -429,7 +429,7 @@ class McpManager:
         finally:
             db.close()
 
-    async def call_tool(self, qualified_name: str, arguments: Dict) -> Dict:
+    async def call_tool(self, qualified_name: str, arguments: dict) -> dict:
         """Call an MCP tool by its qualified name (mcp__{server_id}__{tool_name}).
 
         Returns a result dict compatible with agent_tools format.
@@ -471,7 +471,7 @@ class McpManager:
 
         return result
 
-    async def _do_call(self, session, tool_name: str, arguments: Dict) -> Dict:
+    async def _do_call(self, session, tool_name: str, arguments: dict) -> dict:
         """Execute a single MCP tool call and return result dict."""
         result = await session.call_tool(tool_name, arguments)
         output_parts = []
@@ -530,7 +530,7 @@ class McpManager:
             logger.error(f"Failed to reconnect builtin MCP server {name}: {e}")
             return False
 
-    def get_all_openai_schemas(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
+    def get_all_openai_schemas(self, disabled_map: dict[str, set] | None = None) -> list[dict]:
         """Return all MCP tools in OpenAI function-calling format.
 
         Tool names are namespaced as mcp__{server_id}__{tool_name}.
@@ -565,7 +565,7 @@ class McpManager:
 
         return schemas
 
-    def get_all_tools(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
+    def get_all_tools(self, disabled_map: dict[str, set] | None = None) -> list[dict]:
         """Return a flat list of all discovered tools with server info."""
         result = []
         for server_id, tools in self._tools.items():
@@ -583,7 +583,7 @@ class McpManager:
                 })
         return result
 
-    def plan_mode_blocked_mcp(self) -> Tuple[Dict[str, Set[str]], Set[str]]:
+    def plan_mode_blocked_mcp(self) -> tuple[dict[str, set[str]], set[str]]:
         """Plan mode: block every MCP tool that isn't clearly read-only.
 
         Returns (disabled_map, qualified_names):
@@ -592,8 +592,8 @@ class McpManager:
           - qualified_names: {"mcp__<server>__<tool>", ...} for runtime rejection
             in execute_tool_block (which matches the qualified name).
         """
-        disabled_map: Dict[str, Set[str]] = {}
-        qualified: Set[str] = set()
+        disabled_map: dict[str, set[str]] = {}
+        qualified: set[str] = set()
         for server_id, tools in self._tools.items():
             for tool in tools:
                 if not mcp_tool_is_readonly(tool):
@@ -610,18 +610,18 @@ class McpManager:
             "email",
         }
 
-    def get_server_status(self, server_id: str) -> Dict:
+    def get_server_status(self, server_id: str) -> dict:
         """Get connection status for a server."""
         return self._connections.get(server_id, {"status": "disconnected"})
 
-    def get_all_statuses(self) -> Dict[str, Dict]:
+    def get_all_statuses(self) -> dict[str, dict]:
         """Get connection statuses for all servers."""
         return dict(self._connections)
 
     _cached_prompt_desc = None
     _cached_prompt_desc_key = None
 
-    def get_tool_descriptions_for_prompt(self, disabled_map: Optional[Dict[str, set]] = None) -> str:
+    def get_tool_descriptions_for_prompt(self, disabled_map: dict[str, set] | None = None) -> str:
         """Generate text describing MCP tools for the agent system prompt. Cached."""
         cache_key = (
             frozenset((k, frozenset(v)) for k, v in (disabled_map or {}).items()),

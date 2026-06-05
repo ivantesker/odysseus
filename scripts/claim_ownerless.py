@@ -41,7 +41,7 @@ def main():
         if not os.path.exists(path):
             print(f"  {label}: not found, skipping")
             continue
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             entries = json.load(f)
         count = claim_json_entries(entries, owner)
         if count:
