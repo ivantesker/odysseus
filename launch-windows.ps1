@@ -50,6 +50,20 @@ function Find-GitBash {
     return $null
 }
 
+function Find-Uv {
+    # uv is the project's preferred package manager (fast, single binary). Use it
+    # for the venv + dependency install when available; fall back to python+pip.
+    $cmd = Get-Command uv -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    foreach ($base in @($env:USERPROFILE, $env:LOCALAPPDATA)) {
+        if ($base) {
+            $candidate = Join-Path $base ".local\bin\uv.exe"
+            if (Test-Path $candidate) { return $candidate }
+        }
+    }
+    return $null
+}
+
 # 1. Locate a Python interpreter (3.11+ required)
 Write-Step "Checking for Python"
 function Get-PythonVersionText($launcher, $launcherArgs) {
@@ -99,26 +113,38 @@ if (-not $pyExe) {
 $pythonLabel = ("Using Python {0}: {1} {2}" -f $pyVersion, $pyExe, ($pyArgs -join ' ')).TrimEnd()
 Write-Host $pythonLabel
 
-# 2. Create the virtualenv if missing
+# pip/uv auto-read the Windows system proxy from the registry. If that proxy is
+# a SOCKS proxy (e.g. socks=127.0.0.1:10808 from a VPN client) the install fails
+# with "Missing dependencies for SOCKS support" unless PySocks is present. PyPI
+# is reachable directly, so bypass the proxy with NO_PROXY for the whole run.
+$env:NO_PROXY = "*"
+
 $venvPy = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
+$uv = Find-Uv
+
+# 2. Create the virtualenv if missing (uv preferred, falls back to python -m venv)
 if (-not (Test-Path $venvPy)) {
     Write-Step "Creating virtual environment (venv)"
-    & $pyExe @pyArgs -m venv venv
+    if ($uv) {
+        Write-Host "Using uv: $uv"
+        & $uv venv venv --python $pyVersion
+    } else {
+        & $pyExe @pyArgs -m venv venv
+    }
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) { Fail "Failed to create the virtual environment." }
 } else {
     Write-Host "venv already exists - skipping creation."
 }
 
-# 3. Install / update dependencies
-# pip auto-reads the Windows system proxy from the registry. If that proxy is a
-# SOCKS proxy (e.g. socks=127.0.0.1:10808 from a VPN client) pip fails with
-# "Missing dependencies for SOCKS support" unless PySocks is installed. PyPI is
-# reachable directly, so bypass the proxy for pip with NO_PROXY.
+# 3. Install / update dependencies (uv is much faster; pip is the fallback)
 Write-Step "Installing dependencies (first run can take a few minutes)"
-$env:NO_PROXY = "*"
-& $venvPy -m pip install --upgrade pip --quiet
-& $venvPy -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+if ($uv) {
+    & $uv pip install --python $venvPy -r requirements.txt
+} else {
+    & $venvPy -m pip install --upgrade pip --quiet
+    & $venvPy -m pip install -r requirements.txt
+}
+if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the error." }
 
 # 4. First-time setup (creates data dirs, DB, .env, admin user)
 Write-Step "Running first-time setup"
