@@ -211,7 +211,6 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     """Setup session routes with the provided manager and config"""
 
     REQUEST_TIMEOUT = config.get("REQUEST_TIMEOUT", 20)
-    OPENAI_API_KEY = config.get("OPENAI_API_KEY")
     SESSIONS_FILE = config.get("SESSIONS_FILE")
     
     @router.get("/sessions")
@@ -835,31 +834,6 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise HTTPException(401, "Not authenticated")
         session_manager.save_sessions()
         return {"ok": True, "path": SESSIONS_FILE}
-    
-    @router.post("/session/openai")
-    def create_session_openai(
-        request: Request,
-        name: str = Form("New Chat (OpenAI)"),
-        model: str = Form("gpt-4o"),
-        rag: str = Form(None)
-    ):
-        if not OPENAI_API_KEY:
-            raise HTTPException(400, "Server missing OPENAI_API_KEY")
-        sid = str(uuid.uuid4())
-        user = effective_user(request)
-        session = session_manager.create_session(
-            session_id=sid,
-            name="",
-            endpoint_url="https://api.openai.com/v1/chat/completions",
-            model=model,
-            rag=str(rag).lower() == "true",
-            owner=user,
-        )
-        session.headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
-        session_manager.save_sessions()
-        from src.event_bus import fire_event
-        fire_event("session_created", user)
-        return {"id": sid, "name": "", "model": model}
     
     @router.post("/session/{session_id}/important")
     async def mark_session_important(request: Request, session_id: str, important: bool = Form(True)):

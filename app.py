@@ -51,7 +51,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Core imports
 from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
-    REQUEST_TIMEOUT, OPENAI_API_KEY,
+    REQUEST_TIMEOUT,
 )
 from core.database import SessionLocal, ApiToken
 from core.middleware import SecurityHeadersMiddleware
@@ -525,7 +525,7 @@ app.include_router(setup_workspace_routes())
 
 # Sessions
 from routes.session_routes import setup_session_routes
-session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
+session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "SESSIONS_FILE": SESSIONS_FILE}
 app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
