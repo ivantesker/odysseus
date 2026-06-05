@@ -60,6 +60,10 @@ def test_signature_png_normalization_accepts_data_url_and_raw_base64():
         "data:image/jpeg;base64," + base64.b64encode(b"\xff\xd8jpeg").decode("ascii"),
         "A" * (signature_routes._MAX_SIGNATURE_B64 + 4),
     ],
+    # Explicit short ids: without them the oversized case puts a multi-KB value
+    # in the test nodeid, which pytest mirrors into the PYTEST_CURRENT_TEST env
+    # var — overflowing the 32767-char Windows environment-variable limit.
+    ids=["empty", "not_base64", "not_png", "jpeg_mislabeled", "oversized"],
 )
 def test_signature_png_normalization_rejects_invalid_inputs(raw):
     with pytest.raises(HTTPException) as exc:
