@@ -186,3 +186,41 @@ def test_inject_messages_missing_session():
             raise KeyError(sid)
     with pytest.raises(SessionNotFoundError):
         session_service.inject_messages(_Mgr(), "nope", [])
+
+
+def _export_session():
+    from types import SimpleNamespace as N
+    return N(
+        name="My Chat",
+        model="qwen2.5",
+        history=[
+            N(role="user", content="hi"),
+            N(role="assistant", content=[{"type": "text", "text": "yo"}]),
+        ],
+    )
+
+
+@pytest.mark.parametrize("fmt,media", [
+    ("md", "text/markdown"),
+    ("txt", "text/plain"),
+    ("json", "application/json"),
+    ("html", "text/html"),
+])
+def test_render_export_formats(fmt, media):
+    content, media_type, out = session_service.render_session_export(_export_session(), fmt, "")
+    assert media_type == media
+    assert out.endswith(f".{fmt}")
+    assert "yo" in content  # multimodal content flattened, not dropped
+
+
+def test_render_export_sanitizes_filename():
+    # Path separators are stripped (no traversal); dots stay for extensions.
+    _, _, out = session_service.render_session_export(_export_session(), "md", "../../etc/passwd")
+    assert "/" not in out
+    assert "\\" not in out
+
+
+def test_flatten_content_shapes():
+    assert session_service.flatten_content("plain") == "plain"
+    assert session_service.flatten_content([{"type": "text", "text": "a"}, {"text": "b"}]) == "a\nb"
+    assert session_service.flatten_content(None) == ""

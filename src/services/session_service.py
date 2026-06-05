@@ -74,6 +74,102 @@ def unarchive_session(session_manager, sid: str) -> dict:
         db.close()
 
 
+import html as _html
+import re as _re
+from datetime import datetime as _datetime
+
+
+def sanitize_export_filename(name: str) -> str:
+    """Return a conservative filename safe for Content-Disposition."""
+    name = name if isinstance(name, str) else ""
+    name = _re.sub(r"[^A-Za-z0-9._-]", "_", name)
+    return name[:128]
+
+
+def flatten_content(content) -> str:
+    """Flatten a message's content to plain text for text-based exports.
+
+    Handles the three stored shapes: a plain string, a multimodal block list,
+    or None (a tool-only assistant turn). Returns "" for anything without text.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            b.get("text", "") for b in content
+            if isinstance(b, dict) and b.get("text")
+        )
+    return ""
+
+
+def render_session_export(session, fmt: str = "md", filename: str = "") -> tuple[str, str, str]:
+    """Render a session's history to (content, media_type, out_name).
+
+    Pure: takes the session object, returns bytes-as-str + the response
+    metadata. The route wraps the result in a FastAPI Response.
+    """
+    safe_name = _re.sub(r"[^\w\-_]", "_", session.name or "")
+    timestamp = _datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = sanitize_export_filename(filename)
+
+    if fmt == "json":
+        import json as _json
+        data = {
+            "name": session.name,
+            "model": session.model,
+            "exported": _datetime.now().isoformat(),
+            "messages": [{"role": m.role, "content": m.content} for m in session.history],
+        }
+        out = filename or f"conversation_{safe_name}_{timestamp}.json"
+        return _json.dumps(data, indent=2, ensure_ascii=False), "application/json", out
+
+    if fmt == "txt":
+        lines = []
+        for m in session.history:
+            lines.append(f"[{m.role.upper()}]")
+            lines.append(flatten_content(m.content))
+            lines.append("")
+        out = filename or f"conversation_{safe_name}_{timestamp}.txt"
+        return "\n".join(lines), "text/plain", out
+
+    if fmt == "html":
+        safe_title = _html.escape(session.name or "")
+        parts = [
+            "<!DOCTYPE html><html><head>",
+            f"<meta charset='utf-8'><title>{safe_title}</title>",
+            "<style>body{font-family:monospace;max-width:800px;margin:2rem auto;padding:0 1rem;background:#111;color:#ddd}",
+            ".msg{margin:1rem 0;padding:0.8rem;border-radius:6px;border:1px solid #333}",
+            ".user{background:#1a1a2e}.ai{background:#1a2e1a}",
+            ".role{font-weight:bold;margin-bottom:0.4rem;opacity:0.7;text-transform:uppercase;font-size:0.85em}",
+            "pre{background:#000;padding:0.5rem;border-radius:4px;overflow-x:auto}</style></head><body>",
+            f"<h1>{safe_title}</h1>",
+        ]
+        for m in session.history:
+            cls = "user" if m.role == "user" else "ai"
+            content = flatten_content(m.content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            content = content.replace("\n", "<br>")
+            parts.append(f'<div class="msg {cls}"><div class="role">{m.role}</div>{content}</div>')
+        parts.append("</body></html>")
+        out = filename or f"conversation_{safe_name}_{timestamp}.html"
+        return "\n".join(parts), "text/html", out
+
+    # Default: markdown
+    md = [
+        f"# Conversation: {session.name}",
+        f"*Exported on: {_datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+        f"*Model: {session.model}*",
+        "\n---\n",
+    ]
+    for message in session.history:
+        md.append(f"### {message.role.upper()}")
+        md.append(f"{flatten_content(message.content)}\n")
+        md.append("---\n")
+    if len(md) > 3:
+        md.pop()
+    out = filename or f"conversation_{safe_name}_{timestamp}.md"
+    return "\n".join(md), "text/markdown", out
+
+
 def purge_session(session_manager, sid: str) -> bool:
     """Delete a session everywhere: manager + its DB rows. Returns found-ness.
 

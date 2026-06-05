@@ -16,11 +16,9 @@ from src.auth_helpers import get_current_user, effective_user
 from src.services import session_service
 
 
-def _sanitize_export_filename(name: str) -> str:
-    """Return a conservative filename safe for Content-Disposition."""
-    name = name if isinstance(name, str) else ""
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", name)
-    return name[:128]
+# Export rendering + content flattening now live in the service; alias the pure
+# helpers here so the rest of this module (e.g. _message_text) keeps working.
+_sanitize_export_filename = session_service.sanitize_export_filename
 
 
 # Blind-compare helper sessions are created with this name prefix. Their real
@@ -39,24 +37,7 @@ def _public_model(name: str, model: str) -> str:
     return model
 
 
-def _content_to_text(content) -> str:
-    """Flatten a message's content to plain text for text-based exports.
-
-    History entries carry three shapes: a plain string, a multimodal list of
-    content blocks (vision/image attachments), or None (assistant turns that
-    persisted only native tool_calls). The txt/html/md exporters join and
-    string-munge this value, so a list crashed the export (TypeError on join,
-    AttributeError on .replace) and None rendered as the literal "None".
-    Coerce to the text blocks, returning "" for anything without text.
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(
-            b.get("text", "") for b in content
-            if isinstance(b, dict) and b.get("text")
-        )
-    return ""
+_content_to_text = session_service.flatten_content
 
 
 def _message_role(message) -> str:
@@ -636,81 +617,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         except KeyError:
             raise HTTPException(404, f"Session {sid} not found") from None
 
-        safe_name = re.sub(r'[^\w\-_]', '_', session.name)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = _sanitize_export_filename(filename)
-
-        if fmt == "json":
-            import json as _json
-            data = {
-                "name": session.name,
-                "model": session.model,
-                "exported": datetime.now().isoformat(),
-                "messages": [{"role": m.role, "content": m.content} for m in session.history],
-            }
-            out_name = filename or f"conversation_{safe_name}_{timestamp}.json"
-            return Response(
-                content=_json.dumps(data, indent=2, ensure_ascii=False),
-                media_type="application/json",
-                headers={"Content-Disposition": f"attachment; filename={out_name}"},
-            )
-
-        if fmt == "txt":
-            lines = []
-            for m in session.history:
-                lines.append(f"[{m.role.upper()}]")
-                lines.append(_content_to_text(m.content))
-                lines.append("")
-            out_name = filename or f"conversation_{safe_name}_{timestamp}.txt"
-            return Response(
-                content="\n".join(lines),
-                media_type="text/plain",
-                headers={"Content-Disposition": f"attachment; filename={out_name}"},
-            )
-
-        if fmt == "html":
-            safe_title = html.escape(session.name or "")
-            html_parts = [
-                "<!DOCTYPE html><html><head>",
-                f"<meta charset='utf-8'><title>{safe_title}</title>",
-                "<style>body{font-family:monospace;max-width:800px;margin:2rem auto;padding:0 1rem;background:#111;color:#ddd}",
-                ".msg{margin:1rem 0;padding:0.8rem;border-radius:6px;border:1px solid #333}",
-                ".user{background:#1a1a2e}.ai{background:#1a2e1a}",
-                ".role{font-weight:bold;margin-bottom:0.4rem;opacity:0.7;text-transform:uppercase;font-size:0.85em}",
-                "pre{background:#000;padding:0.5rem;border-radius:4px;overflow-x:auto}</style></head><body>",
-                f"<h1>{safe_title}</h1>",
-            ]
-            for m in session.history:
-                cls = "user" if m.role == "user" else "ai"
-                content = _content_to_text(m.content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                content = content.replace("\n", "<br>")
-                html_parts.append(f'<div class="msg {cls}"><div class="role">{m.role}</div>{content}</div>')
-            html_parts.append("</body></html>")
-            out_name = filename or f"conversation_{safe_name}_{timestamp}.html"
-            return Response(
-                content="\n".join(html_parts),
-                media_type="text/html",
-                headers={"Content-Disposition": f"attachment; filename={out_name}"},
-            )
-
-        # Default: markdown
-        markdown_lines = []
-        markdown_lines.append(f"# Conversation: {session.name}")
-        markdown_lines.append(f"*Exported on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
-        markdown_lines.append(f"*Model: {session.model}*")
-        markdown_lines.append("\n---\n")
-        for message in session.history:
-            role = message.role.upper()
-            content = _content_to_text(message.content)
-            markdown_lines.append(f"### {role}")
-            markdown_lines.append(f"{content}\n")
-            markdown_lines.append("---\n")
-        if len(markdown_lines) > 3:
-            markdown_lines.pop()
-        out_name = filename or f"conversation_{safe_name}_{timestamp}.md"
+        content, media_type, out_name = session_service.render_session_export(session, fmt, filename)
         return Response(
-            content="\n".join(markdown_lines),
-            media_type="text/markdown",
+            content=content,
+            media_type=media_type,
             headers={"Content-Disposition": f"attachment; filename={out_name}"},
         )
 
