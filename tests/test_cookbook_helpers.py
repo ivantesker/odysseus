@@ -138,7 +138,7 @@ def test_pip_install_fallback_chain_propagates_failure_in_venv():
     )
     result = subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, encoding="utf-8", timeout=10,
     )
     assert "user_attempt" not in result.stdout
     assert result.returncode != 0, "Chain should propagate failure when base fails in venv"
@@ -156,7 +156,7 @@ def test_pip_install_fallback_chain_tries_user_outside_venv():
     )
     result = subprocess.run(
         ["bash", "-c", script],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True, text=True, encoding="utf-8", timeout=10,
     )
     assert "user_attempt" in result.stdout, "Chain should try --user when not in venv and base fails"
 
@@ -243,7 +243,7 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=60,
     )
     assert result.returncode != 0, "pip install of a nonexistent package should fail"
@@ -257,7 +257,7 @@ def test_pip_install_attempt_success_exits_zero():
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=15,
     )
     assert result.returncode == 0
@@ -271,7 +271,7 @@ def test_pip_install_attempt_surfaces_stderr_on_failure():
     result = subprocess.run(
         ["bash", "-c", snippet],
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
         timeout=60,
     )
     # pip's error message should be visible in the output (not swallowed)
@@ -503,7 +503,7 @@ def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     env["HOME"] = git_bash_path(tmp_path)
     result = subprocess.run(
         [bash, "-c", _llama_cpp_rebuild_cmd()],
-        capture_output=True, text=True, env=env, timeout=10,
+        capture_output=True, text=True, encoding="utf-8", env=env, timeout=10,
     )
 
     assert result.returncode == 0, result.stderr
@@ -533,7 +533,7 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
         [sys.executable, str(scan_py)],
         check=True,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
 
     by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
