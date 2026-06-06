@@ -24,7 +24,7 @@ from fastapi import HTTPException
 
 
 def test_get_upcoming_events_is_owner_scoped():
-    source = Path("core/database.py").read_text()
+    source = Path("core/database.py").read_text(encoding='utf-8')
     tree = ast.parse(source)
     fn = next(
         node for node in tree.body
@@ -323,4 +323,22 @@ def test_export_ics_rejects_cross_owner_calendar_at_route_boundary(monkeypatch):
 
     assert exc.value.status_code == 404
     assert not session.event_query.all_called
+    session.close.assert_called_once()
+
+
+def test_export_ics_sanitizes_calendar_name_for_download_header(monkeypatch):
+    calendar_routes = _import_calendar_routes(monkeypatch)
+    cal = _calendar("alice")
+    cal.name = 'Work\r\nX-Injected: yes";/..\\evil'
+    session = _FakeSession(calendars=[cal])
+    monkeypatch.setattr(calendar_routes, "SessionLocal", lambda: session)
+    export_ics = _route_endpoint(calendar_routes, "/export/{cal_id}", "GET")
+
+    response = asyncio.run(export_ics(_request(), cal_id="cal-target"))
+
+    assert (
+        response.headers["content-disposition"]
+        == 'attachment; filename="Work__X-Injected__yes___.._evil.ics"'
+    )
+    assert response.headers["x-content-type-options"] == "nosniff"
     session.close.assert_called_once()

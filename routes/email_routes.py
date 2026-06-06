@@ -24,7 +24,7 @@ import html
 from html.parser import HTMLParser as _HTMLParser
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 
 from email.mime.text import MIMEText
@@ -35,6 +35,7 @@ from fastapi.responses import FileResponse
 
 from src.llm_core import llm_call_async
 from src.upload_limits import read_upload_limited
+from src.services import email_service
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -109,7 +110,7 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
     try:
         from src.event_bus import fire_event
         account_key = (account_id or "default").strip() or "default"
-        now = datetime.utcnow().isoformat() + "Z"
+        now = datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"
         keys = []
         for e in emails:
             key = (e.get("message_id") or e.get("uid") or "").strip()
@@ -157,12 +158,9 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
         logger.debug("email_received event detection skipped", exc_info=True)
 
 
-def _folder_name_from_list_line(line) -> str | None:
-    decoded = line.decode() if isinstance(line, bytes) else str(line)
-    match = re.search(r'"([^"]*)"\s*$|(\S+)\s*$', decoded)
-    if not match:
-        return None
-    return match.group(1) or match.group(2)
+# Pure parsing/formatting/sanitization helpers now live in the email service;
+# alias them so the connection-bound helpers in this module keep working.
+_folder_name_from_list_line = email_service.folder_name_from_list_line
 
 
 def _list_imap_folders(conn) -> tuple[list, list[str]]:
@@ -205,19 +203,8 @@ def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
     return preferred
 
 
-def _folder_role_from_name(name: str) -> str:
-    lower = (name or "").lower()
-    if "trash" in lower or "bin" in lower or "deleted" in lower:
-        return "trash"
-    if "spam" in lower or "junk" in lower:
-        return "junk"
-    if "archive" in lower or "all mail" in lower:
-        return "archive"
-    return ""
-
-
-def _uid_bytes(uid: str | bytes) -> bytes:
-    return uid if isinstance(uid, bytes) else str(uid).encode()
+_folder_role_from_name = email_service.folder_role_from_name
+_uid_bytes = email_service.uid_bytes
 
 
 def _uid_exists(conn, uid: str) -> bool:
@@ -243,13 +230,8 @@ def _imap_uid_fetch(conn, uid_set: str | bytes, query: str):
     return conn.uid("FETCH", _uid_bytes(uid_set), query)
 
 
-def _uid_from_fetch_meta(meta_b: bytes) -> str:
-    m = re.search(rb"\bUID\s+(\d+)\b", meta_b)
-    return m.group(1).decode() if m else ""
-
-
-def _smtp_ready(cfg: dict) -> bool:
-    return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
+_uid_from_fetch_meta = email_service.uid_from_fetch_meta
+_smtp_ready = email_service.smtp_ready
 
 
 def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict:
@@ -324,136 +306,11 @@ def _apply_odysseus_headers(msg, kind: str | None = None, ref_id: str | None = N
         msg["X-Odysseus-Ref"] = re.sub(r"[^A-Za-z0-9_.:-]", "-", ref_id)[:128]
 
 
-def _envelope_recipients(*fields: str) -> list:
-    """Extract bare SMTP envelope addresses from one or more To/Cc/Bcc header
-    strings. A naive `field.split(",")` corrupts display names that contain a
-    comma (e.g. `"Smith, John" <john@corp.com>`, the canonical Outlook form):
-    it splits into `"Smith` and `John" <john@corp.com>`, breaking delivery.
-    email.utils.getaddresses parses the address grammar correctly."""
-    out = []
-    for _name, addr in email.utils.getaddresses([f for f in fields if f]):
-        addr = (addr or "").strip()
-        if addr:
-            out.append(addr)
-    return out
+_envelope_recipients = email_service.envelope_recipients
 
 
-def _md_to_email_html(text: str) -> str:
-    """Render the compose markdown body to a SAFE HTML fragment for the email's
-    text/html part. Everything is HTML-escaped FIRST (so a pasted <script> /
-    <img onerror=...> can never become live HTML in the recipient's client),
-    then the toolbar's formatting is layered on with controlled regex: bold,
-    italic, strike, inline code, http(s) links, headings, and bullet/numbered
-    lists. Plain-text readers still get the raw markdown via the text/plain part.
-    """
-    def _inline(s: str) -> str:
-        s = html.escape(s)                                  # escape BEFORE formatting
-        s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
-        s = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", s)
-        s = re.sub(r"~~([^~]+)~~", r"<del>\1</del>", s)
-        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
-        # links: text + http(s) url only (escape() already neutralised quotes)
-        s = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', s)
-        return s
-
-    parts: list[str] = []
-    in_ul = in_ol = False
-    for ln in (text or "").split("\n"):
-        m_h = re.match(r"^(#{1,3})\s+(.*)$", ln)
-        m_ul = re.match(r"^\s*[-*]\s+(.*)$", ln)
-        m_ol = re.match(r"^\s*\d+\.\s+(.*)$", ln)
-        if m_h:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if in_ol: parts.append("</ol>"); in_ol = False
-            lvl = len(m_h.group(1))
-            parts.append(f"<h{lvl}>{_inline(m_h.group(2))}</h{lvl}>")
-        elif m_ul:
-            if in_ol: parts.append("</ol>"); in_ol = False
-            if not in_ul: parts.append("<ul>"); in_ul = True
-            parts.append(f"<li>{_inline(m_ul.group(1))}</li>")
-        elif m_ol:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if not in_ol: parts.append("<ol>"); in_ol = True
-            parts.append(f"<li>{_inline(m_ol.group(1))}</li>")
-        else:
-            if in_ul: parts.append("</ul>"); in_ul = False
-            if in_ol: parts.append("</ol>"); in_ol = False
-            parts.append(_inline(ln) + "<br>")
-    if in_ul: parts.append("</ul>")
-    if in_ol: parts.append("</ol>")
-    return "<html><body>" + "\n".join(parts) + "</body></html>"
-
-
-# Tags the WYSIWYG email composer may legitimately produce.
-_EMAIL_ALLOWED_TAGS = {
-    "b", "strong", "i", "em", "u", "s", "strike", "del", "a", "br", "p", "div",
-    "ul", "ol", "li", "blockquote", "span", "h1", "h2", "h3", "code", "pre",
-}
-
-
-class _EmailHtmlSanitizer(_HTMLParser):
-    """Allowlist sanitizer for WYSIWYG-composed email HTML. Emits only known
-    formatting tags (all attributes dropped except a safe href on <a>), escapes
-    all text, and discards <script>/<style> content entirely — so client-sent
-    HTML can never carry live script/handlers into the recipient's client."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.out = []
-        self._skip = 0  # depth inside <script>/<style>
-
-    def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style"):
-            self._skip += 1
-            return
-        if tag == "br":
-            self.out.append("<br>")
-            return
-        if tag not in _EMAIL_ALLOWED_TAGS:
-            return
-        if tag == "a":
-            href = ""
-            for k, v in attrs:
-                if k.lower() == "href" and v and re.match(r"^(https?:|mailto:)", v.strip(), re.I):
-                    href = v.strip()
-            self.out.append(
-                f'<a href="{html.escape(href, quote=True)}" target="_blank" rel="noopener noreferrer">'
-                if href else "<a>")
-        else:
-            self.out.append(f"<{tag}>")
-
-    def handle_startendtag(self, tag, attrs):
-        if tag == "br":
-            self.out.append("<br>")
-
-    def handle_endtag(self, tag):
-        if tag in ("script", "style"):
-            if self._skip:
-                self._skip -= 1
-            return
-        if tag == "br" or tag not in _EMAIL_ALLOWED_TAGS:
-            return
-        self.out.append(f"</{tag}>")
-
-    def handle_data(self, data):
-        if self._skip:
-            return
-        self.out.append(html.escape(data))
-
-
-def _sanitize_email_html(raw: str) -> str:
-    """Return a safe <html><body>…</body></html> from client-supplied compose
-    HTML, or None if it can't be parsed."""
-    p = _EmailHtmlSanitizer()
-    try:
-        p.feed(raw or "")
-        p.close()
-    except Exception:
-        return None
-    inner = "".join(p.out).strip()
-    if not inner:
-        return None
-    return f"<html><body>{inner}</body></html>"
+_md_to_email_html = email_service.md_to_email_html
+_sanitize_email_html = email_service.sanitize_email_html
 
 
 def setup_email_routes():
@@ -881,7 +738,7 @@ def setup_email_routes():
                         # deterministic across hosts.
                         if parsed_date and parsed_date.tzinfo is None:
                             from datetime import timezone as _tz
-                            parsed_date = parsed_date.replace(tzinfo=_tz.utc)
+                            parsed_date = parsed_date.replace(tzinfo=UTC)
                         iso_date = parsed_date.isoformat() if parsed_date else ""
                         date_epoch = parsed_date.timestamp() if parsed_date else 0.0
                         is_read = "\\Seen" in flags
@@ -1118,7 +975,7 @@ def setup_email_routes():
                         parsed_date = email.utils.parsedate_to_datetime(date_str) if date_str else None
                         if parsed_date and parsed_date.tzinfo is None:
                             from datetime import timezone as _tz
-                            parsed_date = parsed_date.replace(tzinfo=_tz.utc)
+                            parsed_date = parsed_date.replace(tzinfo=UTC)
                         iso_date = parsed_date.isoformat() if parsed_date else ""
                         date_epoch = parsed_date.timestamp() if parsed_date else 0.0
                         ct = msg.get("Content-Type", "")
@@ -1532,7 +1389,7 @@ def setup_email_routes():
                 )
 
                 upload_id = f"{uuid.uuid4().hex}.pdf"
-                today = datetime.utcnow().strftime("%Y/%m/%d")
+                today = datetime.now(UTC).replace(tzinfo=None).strftime("%Y/%m/%d")
                 dated_dir = _os.path.join(UPLOAD_DIR, today)
                 _os.makedirs(dated_dir, exist_ok=True)
                 dest_path = _os.path.join(dated_dir, upload_id)
@@ -1944,7 +1801,7 @@ def setup_email_routes():
         if cc:
             outer["Cc"] = cc
         outer["Subject"] = subject or ""
-        outer["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+        outer["Date"] = datetime.now(UTC).replace(tzinfo=None).strftime("%a, %d %b %Y %H:%M:%S +0000")
         _apply_odysseus_headers(outer, odysseus_kind or "scheduled", odysseus_ref)
         if in_reply_to:
             outer["In-Reply-To"] = in_reply_to
@@ -1985,19 +1842,19 @@ def setup_email_routes():
                 parsed_at = _dt.fromisoformat(send_at.replace("Z", "+00:00"))
             except ValueError:
                 return {"success": False, "error": "send_at must be ISO8601"}
-            now_utc = _dt.now(_tz.utc) if parsed_at.tzinfo else _dt.utcnow()
+            now_utc = _dt.now(UTC) if parsed_at.tzinfo else _dt.utcnow()
             # Tiny 30s grace so a user clicking Send right at the chosen
             # minute doesn't trip the past-time guard.
             if parsed_at < now_utc:
                 return {"success": False, "error": "send_at must be in the future"}
             # Normalize to naive UTC before storing: the poller selects due
             # rows with a lexicographic string compare against a naive
-            # datetime.utcnow().isoformat(), so storing the raw client string
+            # datetime.now(UTC).replace(tzinfo=None).isoformat(), so storing the raw client string
             # makes "+02:00" schedules fire hours late, negative offsets fire
             # hours early, and a "Z" suffix compares after the fractional
             # seconds of the poller timestamp.
             if parsed_at.tzinfo:
-                parsed_at = parsed_at.astimezone(_tz.utc).replace(tzinfo=None)
+                parsed_at = parsed_at.astimezone(UTC).replace(tzinfo=None)
             send_at = parsed_at.isoformat()
 
             sid = _uuid.uuid4().hex[:16]
@@ -2017,7 +1874,7 @@ def setup_email_routes():
                 req.get("references") or None,
                 json.dumps(req.get("attachments") or []),
                 send_at,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).replace(tzinfo=None).isoformat(),
                 req.get("account_id") or None,
                 req.get("odysseus_kind") or "scheduled",
                 owner or "",
@@ -2147,7 +2004,7 @@ def setup_email_routes():
         if req.cc:
             outer["Cc"] = req.cc
         outer["Subject"] = req.subject
-        outer["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+        outer["Date"] = datetime.now(UTC).replace(tzinfo=None).strftime("%a, %d %b %Y %H:%M:%S +0000")
         outer["Message-ID"] = email.utils.make_msgid(domain="odysseus.local")
 
         if req.in_reply_to:
@@ -2322,7 +2179,7 @@ def setup_email_routes():
         if req.bcc:
             msg["Bcc"] = req.bcc
         msg["Subject"] = req.subject
-        msg["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+        msg["Date"] = datetime.now(UTC).replace(tzinfo=None).strftime("%a, %d %b %Y %H:%M:%S +0000")
 
         if req.in_reply_to:
             msg["In-Reply-To"] = req.in_reply_to
@@ -2556,7 +2413,7 @@ def setup_email_routes():
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         mid, owner, data.get("uid", ""), data.get("folder", ""),
-                        subject, sender, content, model, datetime.utcnow().isoformat(),
+                        subject, sender, content, model, datetime.now(UTC).replace(tzinfo=None).isoformat(),
                     ))
                     _c.commit()
                     _c.close()
@@ -2797,7 +2654,7 @@ def setup_email_routes():
                         INSERT OR REPLACE INTO email_ai_replies
                         (message_id, owner, uid, folder, reply, model_used, created_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (message_id, owner, source_uid, source_folder, reply, model, datetime.utcnow().isoformat()))
+                    """, (message_id, owner, source_uid, source_folder, reply, model, datetime.now(UTC).replace(tzinfo=None).isoformat()))
                     _c.commit()
                     _c.close()
                 except Exception as e:

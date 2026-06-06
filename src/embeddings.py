@@ -38,13 +38,14 @@ _DEFAULT_FASTEMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 class EmbeddingClient:
     """Drop-in replacement for SentenceTransformer.encode() using an HTTP API."""
 
-    def __init__(self, url: Optional[str] = None, model: Optional[str] = None):
+    def __init__(self, url: str | None = None, model: str | None = None, api_key: str | None = None):
         self.url = url or os.getenv(
             "EMBEDDING_URL",
             f"http://{os.getenv('LLM_HOST', 'localhost')}:11434/v1/embeddings",
         )
         self.model = model or os.getenv("EMBEDDING_MODEL", _DEFAULT_MODEL)
-        self._dim: Optional[int] = None
+        self.api_key = api_key or os.getenv("EMBEDDING_API_KEY")
+        self._dim: int | None = None
         # Short connect timeout so a DOWN embedding endpoint (e.g. Ollama not
         # running on :11434) fast-fails to the local FastEmbed fallback instead
         # of stalling startup ~30s per probe. Read stays generous for a real
@@ -62,7 +63,7 @@ class EmbeddingClient:
         return self._dim
 
     def encode(
-        self, texts: List[str], normalize_embeddings: bool = True
+        self, texts: list[str], normalize_embeddings: bool = True
     ) -> np.ndarray:
         """Encode texts via the API. Returns (N, dim) float32 array."""
         if not texts:
@@ -74,6 +75,7 @@ class EmbeddingClient:
             batch = texts[i : i + 64]
             resp = self._client.post(
                 self.url,
+                headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
                 json={"input": batch, "model": self.model},
             )
             resp.raise_for_status()
@@ -101,7 +103,7 @@ class EmbeddingClient:
 class FastEmbedClient:
     """Local embedding client using fastembed (ONNX). No external service needed."""
 
-    def __init__(self, model: Optional[str] = None):
+    def __init__(self, model: str | None = None):
         try:
             from fastembed import TextEmbedding
         except ImportError as e:
@@ -151,7 +153,7 @@ class FastEmbedClient:
                 logger.debug("embedding cache symlink-heal skipped: %s", _e)
         kwargs = {"model_name": self.model, "cache_dir": cache_dir}
         self._embedding = TextEmbedding(**kwargs)
-        self._dim: Optional[int] = None
+        self._dim: int | None = None
         self.url = "local://fastembed"
         logger.info(f"FastEmbed loaded model={self.model}")
 
@@ -164,7 +166,7 @@ class FastEmbedClient:
         return self._dim
 
     def encode(
-        self, texts: List[str], normalize_embeddings: bool = True
+        self, texts: list[str], normalize_embeddings: bool = True
     ) -> np.ndarray:
         """Encode texts locally. Returns (N, dim) float32 array."""
         if not texts:
@@ -222,11 +224,14 @@ def get_embedding_client():
     if persisted.get("url"):
         url = persisted["url"]
         model = persisted.get("model", "")
+        api_key = persisted.get("api_key", "")
         # Also set in env so other code sees it
         os.environ["EMBEDDING_URL"] = url
         if model:
             os.environ["EMBEDDING_MODEL"] = model
-
+        if api_key:
+            from src.secret_storage import decrypt
+            os.environ["EMBEDDING_API_KEY"] = decrypt(api_key)
     # Try the HTTP embedding API — unless we already found it down this process
     # (avoids paying the connect timeout again on every RAG/memory/tool probe).
     if not _http_embed_down:

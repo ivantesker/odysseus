@@ -42,16 +42,6 @@ class TestHostMatch:
 
 
 class TestDetectProviderRealHosts:
-    def test_anthropic(self):
-        assert llm_core._detect_provider("https://api.anthropic.com") == "anthropic"
-
-    def test_openrouter(self):
-        assert llm_core._detect_provider("https://openrouter.ai/api/v1") == "openrouter"
-
-    def test_groq_openai_compat_path(self):
-        # Groq's base carries an /openai/v1 path; detection must still see the host.
-        assert llm_core._detect_provider("https://api.groq.com/openai/v1") == "groq"
-
     def test_ollama_native_unchanged(self):
         assert llm_core._detect_provider("https://ollama.com/api") == "ollama"
 
@@ -89,9 +79,6 @@ class TestBuildersRejectLookalikeHosts:
         # Provider routing is independent of name resolution, so stub it out to
         # keep these deterministic and offline.
         monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda u: u)
-
-    def test_real_anthropic_chat(self):
-        assert build_chat_url("https://api.anthropic.com") == "https://api.anthropic.com/v1/messages"
 
     def test_lookalike_anthropic_chat_is_openai(self):
         assert build_chat_url("https://notanthropic.com") == "https://notanthropic.com/chat/completions"

@@ -11,6 +11,9 @@ import logging
 import os
 import re
 from typing import Any, Dict, List, Optional
+from datetime import UTC
+
+from src.services import tool_text_service
 
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
@@ -21,10 +24,8 @@ def get_mcp_manager():
     return agent_tools.get_mcp_manager()
 
 
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
+# Pure text helpers live in tool_text_service; alias the names this module uses.
+_truncate = tool_text_service.truncate
 
 logger = logging.getLogger(__name__)
 
@@ -32,54 +33,24 @@ logger = logging.getLogger(__name__)
 # Argument parsing
 # ---------------------------------------------------------------------------
 
-def _parse_tool_args(content):
-    """Parse a tool-call argument blob.
-
-    Accepts either a JSON string or an already-decoded dict. Unwraps the
-    common `{"body": {...}}` envelope that smaller models emit when they
-    read tool descriptions like "Body is JSON: {...}" literally — they
-    pass `body` as a field name rather than treating it as a noun.
-
-    Returns a dict on success, raises ValueError on bad JSON.
-    """
-    if isinstance(content, str):
-        try:
-            args = json.loads(content) if content.strip() else {}
-        except (json.JSONDecodeError, TypeError) as e:
-            raise ValueError(str(e))
-    elif isinstance(content, dict):
-        args = content
-    else:
-        args = {}
-    # Unwrap {"body": {...}} envelope — but only if `body` is the sole key
-    # and points at a dict. We don't want to clobber a legitimate `body`
-    # field on tools where it's a real arg (e.g. send_email body text).
-    if (
-        isinstance(args, dict)
-        and len(args) == 1
-        and "body" in args
-        and isinstance(args["body"], dict)
-        and "action" in args["body"]  # extra safety: only unwrap if the inner dict looks like a tool call
-    ):
-        args = args["body"]
-    return args
+_parse_tool_args = tool_text_service.parse_tool_args
 
 
 # ---------------------------------------------------------------------------
 # Active document state
 # ---------------------------------------------------------------------------
 
-_active_document_id: Optional[str] = None
-_active_model: Optional[str] = None
+_active_document_id: str | None = None
+_active_model: str | None = None
 
 
-def set_active_document(doc_id: Optional[str]):
+def set_active_document(doc_id: str | None):
     """Set the active document ID for document tool execution."""
     global _active_document_id
     _active_document_id = doc_id
 
 
-def set_active_model(model: Optional[str]):
+def set_active_model(model: str | None):
     """Set the current model name for version summaries."""
     global _active_model
     _active_model = model
@@ -89,7 +60,7 @@ def get_active_document():
     return _active_document_id
 
 
-def clear_active_document(doc_id: Optional[str] = None) -> bool:
+def clear_active_document(doc_id: str | None = None) -> bool:
     """Clear the in-memory active-document pointer.
 
     With ``doc_id`` given, only clears when it matches the current pointer, so a
@@ -107,7 +78,7 @@ def clear_active_document(doc_id: Optional[str] = None) -> bool:
     return False
 
 
-def _owned_document_query(query, Document, owner: Optional[str]):
+def _owned_document_query(query, Document, owner: str | None):
     if owner is None:
         # A bare Python `False` is not a valid SQL expression — SQLAlchemy 1.4
         # deprecates it and 2.0 raises ArgumentError. Use the SQL `false()`
@@ -117,7 +88,7 @@ def _owned_document_query(query, Document, owner: Optional[str]):
     return query.filter(Document.owner == owner)
 
 
-def _get_owned_document(db, Document, doc_id: str, owner: Optional[str], active_only: bool = False):
+def _get_owned_document(db, Document, doc_id: str, owner: str | None, active_only: bool = False):
     q = db.query(Document).filter(Document.id == doc_id)
     if active_only:
         q = q.filter(Document.is_active == True)
@@ -125,7 +96,7 @@ def _get_owned_document(db, Document, doc_id: str, owner: Optional[str], active_
     return q.first()
 
 
-def _most_recent_owned_document(db, Document, owner: Optional[str], active_only: bool = False):
+def _most_recent_owned_document(db, Document, owner: str | None, active_only: bool = False):
     q = db.query(Document)
     if active_only:
         q = q.filter(Document.is_active == True)
@@ -137,86 +108,12 @@ def _most_recent_owned_document(db, Document, owner: Optional[str], active_only:
 # Document tools — create/update/edit/suggest living documents
 # ---------------------------------------------------------------------------
 
-def _sniff_doc_language(text: str) -> str:
-    """Best-effort detect a document's language from its content when the model
-    didn't specify one. Defaults to 'markdown' (prose). Recognizes the common
-    markup/code types the editor supports so e.g. an SVG isn't saved as markdown."""
-    import json as _json, re as _re2
-    s = (text or "").strip()
-    if not s:
-        return "markdown"
-    head = s[:600]
-    hl = head.lower()
-    if _looks_like_email_document(s):
-        return "email"
-    # Markup (unambiguous)
-    if "<svg" in hl:
-        return "svg"
-    if hl.startswith("<?xml"):
-        return "xml"
-    if (hl.startswith("<!doctype html") or hl.startswith("<html")
-            or _re2.search(r"<(div|body|head|p|span|table|button|h[1-6]|ul|ol|li|img)\b", hl)):
-        return "html"
-    # JSON
-    if s[0] in "{[":
-        try:
-            _json.loads(s)
-            return "json"
-        except Exception:
-            pass
-    # Shebang
-    first = s.split("\n", 1)[0].strip().lower()
-    if first.startswith("#!"):
-        return "python" if "python" in first else "bash"
-    # Code by strong leading signals (line-anchored so prose with stray words won't match)
-    if _re2.search(r"(?m)^\s*(def \w|class \w|import \w|from \w[\w.]* import )", s):
-        return "python"
-    if _re2.search(r"(?m)^\s*(function \w|const \w|let \w|export |import .* from )", s):
-        return "javascript"
-    if _re2.search(r"(?mi)^\s*(select .* from |create table |insert into |update \w)", s):
-        return "sql"
-    if _re2.search(r"(?m)^[.#]?[\w-]+\s*\{[^{}]*:[^{}]*;", s):
-        return "css"
-    return "markdown"
+_sniff_doc_language = tool_text_service.sniff_doc_language
+_looks_like_email_document = tool_text_service.looks_like_email_document
+_coerce_email_document_content = tool_text_service.coerce_email_document_content
 
 
-def _looks_like_email_document(text: str = "", title: str = "") -> bool:
-    import re as _re
-    title_l = (title or "").strip().lower()
-    if title_l in {"new email", "new mail", "new message"}:
-        return True
-    s = (text or "").lstrip()
-    if "\n---\n" in s and _re.search(r"(?im)^To:\s*", s) and _re.search(r"(?im)^Subject:\s*", s):
-        return True
-    return bool(_re.search(r"(?im)^To:\s*", s) and _re.search(r"(?im)^Subject:\s*", s))
-
-
-def _coerce_email_document_content(existing: str, incoming: str) -> str:
-    """Keep email docs in the To/Subject/---/body shape even if a model writes
-    only the body or dumps header labels without the separator."""
-    import re as _re
-    old = existing or ""
-    new = (incoming or "").strip()
-    if "\n---\n" in new:
-        return new
-    header = old.split("\n---\n", 1)[0] if "\n---\n" in old else "To: \nSubject: "
-    if _looks_like_email_document(new):
-        lines = new.splitlines()
-        last_header_idx = -1
-        header_re = _re.compile(r"^(To|Cc|Bcc|Subject|In-Reply-To|References|X-Source-UID|X-Source-Folder|X-Attachments):", _re.I)
-        for i, line in enumerate(lines):
-            if header_re.match(line.strip()):
-                last_header_idx = i
-        body_lines = lines[last_header_idx + 1:] if last_header_idx >= 0 else lines
-        while body_lines and not body_lines[0].strip():
-            body_lines.pop(0)
-        body = "\n".join(body_lines).strip()
-    else:
-        body = new
-    return header.rstrip() + "\n---\n" + body
-
-
-async def do_create_document(content_block: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_create_document(content_block: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Create a new document. Supports two formats:
       1) Line-based: line 1 = title, line 2 (optional) = language, rest = content
       2) XML-like tags: <title>...</title><language>...</language><content>...</content>
@@ -333,7 +230,7 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
         db.close()
 
 
-async def do_update_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_update_document(content: str, doc_id: str | None = None, owner: str | None = None) -> dict:
     """Update an existing document. Content = full new document text."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
@@ -397,7 +294,7 @@ def parse_edit_blocks(content: str) -> list:
     return edits
 
 
-async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_edit_document(content: str, doc_id: str | None = None, owner: str | None = None) -> dict:
     """Apply targeted FIND/REPLACE edits to an existing document."""
     import uuid
     from src.database import SessionLocal, Document, DocumentVersion
@@ -505,7 +402,7 @@ def parse_suggest_blocks(content: str) -> list:
     return suggestions
 
 
-async def do_suggest_document(content: str, doc_id: str = None, owner: Optional[str] = None) -> Dict:
+async def do_suggest_document(content: str, doc_id: str = None, owner: str | None = None) -> dict:
     """Create inline suggestions for the active document WITHOUT modifying it."""
     from src.database import SessionLocal, Document
 
@@ -548,7 +445,7 @@ async def do_suggest_document(content: str, doc_id: str = None, owner: Optional[
 # Search chats
 # ---------------------------------------------------------------------------
 
-async def do_search_chats(query: str, limit: int = 20, owner: str | None = None) -> Dict:
+async def do_search_chats(query: str, limit: int = 20, owner: str | None = None) -> dict:
     """Search past chat messages for the calling user's sessions only.
 
     Without an owner filter this used to leak EVERY user's chat history
@@ -620,7 +517,7 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
 # Skills management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_skills(content: str, owner: str | None = None) -> dict:
     """Handle manage_skills tool calls.
 
     SKILL.md-backed CRUD with progressive disclosure (Hermes-style). Actions:
@@ -829,7 +726,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     }
 
 
-def _skill_dump(sk) -> Dict:
+def _skill_dump(sk) -> dict:
     """Translate a parsed Skill back into the kwargs `update_skill` expects."""
     return {
         "name": sk.name,
@@ -857,7 +754,7 @@ def _skill_dump(sk) -> Dict:
 # Task management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_tasks(content: str, owner: str | None = None) -> dict:
     """Handle manage_tasks tool calls: CRUD on scheduled tasks."""
     import uuid as _uuid
     from core.database import SessionLocal, ScheduledTask
@@ -1052,7 +949,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
 # Endpoint management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_endpoints(content: str, owner: str | None = None) -> dict:
     """Manage model endpoints: list, add, delete, enable, disable."""
     from core.database import SessionLocal, ModelEndpoint
     try:
@@ -1080,7 +977,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             from datetime import datetime
             ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
                                api_key=api_key, is_enabled=True,
-                               created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+                               created_at=datetime.now(UTC).replace(tzinfo=None), updated_at=datetime.now(UTC).replace(tzinfo=None))
             db.add(ep)
             db.commit()
             return {"response": f"Added endpoint '{name or base_url}' (id: {eid})", "exit_code": 0}
@@ -1117,7 +1014,7 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
 # MCP server management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_mcp(content: str, owner: str | None = None) -> dict:
     """Manage MCP servers: list, add, delete, enable, disable, reconnect."""
     try:
         args = _parse_tool_args(content)
@@ -1162,7 +1059,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             srv = McpServer(id=sid, name=name, transport="stdio", command=command,
                             args=json.dumps(cmd_args) if isinstance(cmd_args, list) else cmd_args,
                             env=json.dumps(env) if isinstance(env, dict) else env,
-                            is_enabled=True, created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+                            is_enabled=True, created_at=datetime.now(UTC).replace(tzinfo=None), updated_at=datetime.now(UTC).replace(tzinfo=None))
             db.add(srv)
             db.commit()
         finally:
@@ -1266,7 +1163,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
 # Webhook management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_webhooks(content: str, owner: str | None = None) -> dict:
     """Manage webhooks: list, add, delete, enable, disable, test."""
     from core.database import SessionLocal
     try:
@@ -1301,7 +1198,7 @@ async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
             wid = str(_uuid.uuid4())[:8]
             hook = Webhook(id=wid, name=name or url, url=url,
                            events=events, is_active=True,
-                           created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+                           created_at=datetime.now(UTC).replace(tzinfo=None), updated_at=datetime.now(UTC).replace(tzinfo=None))
             db.add(hook)
             db.commit()
             return {"response": f"Added webhook '{name or url}'", "exit_code": 0}
@@ -1338,7 +1235,7 @@ async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
 # API token management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_tokens(content: str, owner: str | None = None) -> dict:
     """Manage API tokens: list, create, delete."""
     from core.database import SessionLocal, ApiToken
     try:
@@ -1364,7 +1261,7 @@ async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
             tid = str(_uuid.uuid4())[:8]
             t = ApiToken(id=tid, name=name, token_hash=token_hash,
                          token_prefix=raw_token[:8], is_active=True,
-                         created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+                         created_at=datetime.now(UTC).replace(tzinfo=None), updated_at=datetime.now(UTC).replace(tzinfo=None))
             db.add(t)
             db.commit()
             return {"response": f"Created token '{name}'", "token": raw_token, "exit_code": 0}
@@ -1392,7 +1289,7 @@ async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
 # Document management tool (delete, list, organize)
 # ---------------------------------------------------------------------------
 
-async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_documents(content: str, owner: str | None = None) -> dict:
     """Manage documents: list, read/view/open, delete, tidy.
 
     Output format mirrors `manage_session`: list rows include a
@@ -1414,7 +1311,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
         if not ts:
             return 'never'
         try:
-            now = datetime.now(timezone.utc) if ts.tzinfo is not None else datetime.utcnow()
+            now = datetime.now(UTC) if ts.tzinfo is not None else datetime.now(UTC).replace(tzinfo=None)
             diff = (now - ts).total_seconds()
         except Exception:
             return 'unknown'
@@ -1514,7 +1411,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
 # Settings/preferences management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_settings(content: str, owner: str | None = None) -> dict:
     """Manage user settings and preferences."""
     try:
         args = _parse_tool_args(content)
@@ -1783,7 +1680,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
 # API call tool
 # ---------------------------------------------------------------------------
 
-async def do_api_call(content: str) -> Dict:
+async def do_api_call(content: str) -> dict:
     """Execute an API call to a registered integration."""
     from src.integrations import execute_api_call, load_integrations
     try:
@@ -1824,7 +1721,7 @@ async def do_api_call(content: str) -> Dict:
 # Notes / checklists management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_notes(content: str, owner: str | None = None) -> dict:
     """Handle manage_notes tool calls: CRUD on notes and checklists."""
     import uuid as _uuid
     from core.database import SessionLocal, Note
@@ -2052,7 +1949,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 # Calendar tool — CalDAV-backed event CRUD
 # ---------------------------------------------------------------------------
 
-async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_calendar(content: str, owner: str | None = None) -> dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
@@ -2091,7 +1988,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             q = q.filter(CalendarCal.owner == owner)
         return q
 
-    def _reminder_minutes(raw_args) -> Optional[int]:
+    def _reminder_minutes(raw_args) -> int | None:
         raw = (
             raw_args.get("reminder_minutes")
             or raw_args.get("remind_before_minutes")
@@ -2122,7 +2019,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             return max(0, int(text))
         return None
 
-    def _event_description(raw_args, minutes_before: Optional[int]) -> str:
+    def _event_description(raw_args, minutes_before: int | None) -> str:
         desc = str(raw_args.get("description", "") or "")
         if minutes_before is None:
             return desc
@@ -2139,9 +2036,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 
     def _create_calendar_reminder(summary: str, location: str, dtstart: datetime,
                                   all_day: bool, minutes_before: int,
-                                  is_utc: bool = False) -> tuple[Optional[str], Optional[str]]:
+                                  is_utc: bool = False) -> tuple[str | None, str | None]:
         remind_at = dtstart - timedelta(minutes=minutes_before)
-        now = datetime.utcnow() if is_utc else datetime.now()
+        now = datetime.now(UTC).replace(tzinfo=None) if is_utc else datetime.now()
         if dtstart <= now:
             return None, "event already passed"
         if remind_at <= now:
@@ -2197,7 +2094,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 if args.get("start"):
                     start_dt = _parse_dt(args["start"])
                 else:
-                    start_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                    start_dt = datetime.now(UTC).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
                 if args.get("end"):
                     end_dt = _parse_dt(args["end"])
                 else:
@@ -2495,7 +2392,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 _COOKBOOK_BASE = "http://localhost:7000"
 
 
-def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
+def _internal_headers(owner: str | None = None) -> dict[str, str]:
     from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
     headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
     if owner:
@@ -2503,7 +2400,7 @@ def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
     return headers
 
 
-async def _cookbook_servers() -> Dict[str, Any]:
+async def _cookbook_servers() -> dict[str, Any]:
     """Return the cookbook's configured servers + the currently-selected
     default host. Shape: {default_host, hosts: [{host, platform, env, envPath}]}.
     The agent uses this to route downloads/serves to the right machine
@@ -2561,7 +2458,7 @@ async def _resolve_cookbook_host(name_or_host: str) -> str:
     return val
 
 
-async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
+async def _cookbook_env_for_host(host: str) -> dict[str, Any]:
     """Resolve env_prefix / gpus / platform / hf_token / ssh_port for a
     given host by looking it up in cookbook_state.env. The user
     configures these per-host in the Cookbook UI; without them, raw
@@ -2574,7 +2471,7 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
     """
     import httpx
     headers = _internal_headers()
-    state: Dict[str, Any] = {}
+    state: dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
@@ -2589,7 +2486,7 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
         return {}
 
     # Per-host entry takes precedence over top-level.
-    per_host: Dict[str, Any] = {}
+    per_host: dict[str, Any] = {}
     for s in (env_root.get("servers") or []):
         if isinstance(s, dict) and (s.get("host") or "") == (host or ""):
             per_host = s
@@ -2733,7 +2630,7 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 )
 
 
-async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
+async def do_app_api(content: str, owner: str | None = None) -> dict:
     """Generic loopback to any internal Odysseus API endpoint. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,
     calendar, skills, sessions, gallery, research, etc.) without us
@@ -2771,7 +2668,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
                 data = resp.json()
         except Exception as e:
             return {"error": f"OpenAPI fetch failed: {e}", "exit_code": 1}
-        rows: List[Dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         for path, methods in (data.get("paths") or {}).items():
             if not isinstance(methods, dict):
                 continue
@@ -2890,7 +2787,7 @@ _MODEL_PROCESS_PATTERNS = [
 ]
 
 
-def _cookbook_apply_retry_suggestion(cmd: str, suggestion: Dict[str, Any]) -> str:
+def _cookbook_apply_retry_suggestion(cmd: str, suggestion: dict[str, Any]) -> str:
     """Apply a structured Cookbook diagnosis suggestion to a serve command."""
     if not cmd or not suggestion:
         return cmd
@@ -2917,7 +2814,7 @@ def _cookbook_apply_retry_suggestion(cmd: str, suggestion: Dict[str, Any]) -> st
     return cmd
 
 
-def _scan_running_model_processes() -> List[Dict[str, Any]]:
+def _scan_running_model_processes() -> list[dict[str, Any]]:
     """Scan /proc for running model server processes. Linux-only; returns
     [] on other platforms or if /proc isn't accessible. Each match returns
     a dict shaped like a cookbook task so the caller can merge cleanly.
@@ -2925,7 +2822,7 @@ def _scan_running_model_processes() -> List[Dict[str, Any]]:
     import os
     if not os.path.isdir("/proc"):
         return []
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     seen_keys = set()
     try:
         for pid_dir in os.listdir("/proc"):
@@ -2976,7 +2873,7 @@ def _scan_running_model_processes() -> List[Dict[str, Any]]:
     return out
 
 
-async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
+async def do_download_model(content: str, owner: str | None = None) -> dict:
     """Download a HuggingFace model via the cookbook API."""
     import httpx
     try:
@@ -3030,7 +2927,7 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": str(e), "exit_code": 1}
 
 
-async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
+async def do_serve_model(content: str, owner: str | None = None) -> dict:
     """Start serving a model via the cookbook API."""
     import httpx
     try:
@@ -3116,7 +3013,7 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": str(e), "exit_code": 1}
 
 
-async def do_list_served_models(content: str, owner: Optional[str] = None) -> Dict:
+async def do_list_served_models(content: str, owner: str | None = None) -> dict:
     """List running model servers — merges cookbook-tracked tasks with
     a /proc scan for externally-launched LLM/diffusion processes
     (vLLM, sglang, llama.cpp, Ollama, ComfyUI, A1111, Fooocus, etc.)."""
@@ -3125,7 +3022,7 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
 
     # Cookbook-tracked tasks (best-effort; don't fail the whole call if
     # this is unreachable).
-    cookbook_tasks: List[Dict[str, Any]] = []
+    cookbook_tasks: list[dict[str, Any]] = []
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/tasks/status",
@@ -3137,7 +3034,7 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
     # Local process scan — runs in a worker thread so it doesn't block.
     external = await asyncio.to_thread(_scan_running_model_processes)
 
-    merged: List[Dict[str, Any]] = []
+    merged: list[dict[str, Any]] = []
     merged.extend(cookbook_tasks)
     # Dedupe: if a process's PID is already mentioned by a cookbook task
     # (cookbook may track the PID via session_id), skip it.
@@ -3165,7 +3062,7 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
         "stopped": 6, "killed": 6, "cancelled": 6, "canceled": 6,
         "done": 7, "completed": 7, "finished": 7,
     }
-    def _rank(t: Dict[str, Any]) -> int:
+    def _rank(t: dict[str, Any]) -> int:
         phase = (t.get("phase") or t.get("status") or "unknown").lower()
         return _ORDER.get(phase, 3)
     merged.sort(key=_rank)
@@ -3227,7 +3124,7 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
 
 
 async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
-                                 ssh_port: str = "", verb: str = "Stopped") -> Dict:
+                                 ssh_port: str = "", verb: str = "Stopped") -> dict:
     """Kill a cookbook tmux session — remote-aware — AND mark the task
     stopped in cookbook_state.json. Shared by stop_served_model and
     cancel_download so both behave identically.
@@ -3244,7 +3141,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
     sport = ssh_port or ""
 
     # Look up the task's host + confirm it exists in state.
-    state: Dict[str, Any] = {}
+    state: dict[str, Any] = {}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
@@ -3308,7 +3205,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
         return {"error": str(e), "exit_code": 1}
 
 
-async def do_stop_served_model(content: str, owner: Optional[str] = None) -> Dict:
+async def do_stop_served_model(content: str, owner: str | None = None) -> dict:
     """Stop a running model server by killing its tmux session (remote-aware)."""
     try:
         args = _parse_tool_args(content)
@@ -3325,7 +3222,7 @@ async def do_stop_served_model(content: str, owner: Optional[str] = None) -> Dic
     )
 
 
-async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dict:
+async def do_tail_serve_output(content: str, owner: str | None = None) -> dict:
     """Capture the last N lines of a cookbook task's tmux pane — remote-aware.
 
     Used by the agent to debug a failed/stuck serve: list_served_models tells
@@ -3357,7 +3254,7 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
     # Resolve host from cookbook state if caller didn't pass one — same
     # lookup _cookbook_kill_session uses.
     if not remote:
-        state: Dict[str, Any] = {}
+        state: dict[str, Any] = {}
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
@@ -3444,7 +3341,7 @@ async def do_tail_serve_output(content: str, owner: Optional[str] = None) -> Dic
         return {"error": str(e), "exit_code": 1}
 
 
-async def do_list_downloads(content: str, owner: Optional[str] = None) -> Dict:
+async def do_list_downloads(content: str, owner: str | None = None) -> dict:
     """List in-flight model downloads (filters /api/cookbook/tasks/status to type=download)."""
     import httpx
     try:
@@ -3467,7 +3364,7 @@ async def do_list_downloads(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": str(e), "exit_code": 1}
 
 
-async def do_cancel_download(content: str, owner: Optional[str] = None) -> Dict:
+async def do_cancel_download(content: str, owner: str | None = None) -> dict:
     """Cancel a model download by killing its tmux session (remote-aware)."""
     try:
         args = _parse_tool_args(content)
@@ -3484,7 +3381,7 @@ async def do_cancel_download(content: str, owner: Optional[str] = None) -> Dict:
     )
 
 
-async def do_search_hf_models(content: str, owner: Optional[str] = None) -> Dict:
+async def do_search_hf_models(content: str, owner: str | None = None) -> dict:
     """Search HuggingFace via the cookbook /api/cookbook/hf-latest endpoint."""
     import httpx
     try:
@@ -3493,7 +3390,7 @@ async def do_search_hf_models(content: str, owner: Optional[str] = None) -> Dict
         return {"error": "Invalid JSON arguments", "exit_code": 1}
     query = args.get("query", "") or args.get("search", "")
     limit = args.get("limit", 10)
-    params: Dict[str, str] = {}
+    params: dict[str, str] = {}
     if query:
         params["search"] = query
     if limit:
@@ -3526,7 +3423,7 @@ async def do_search_hf_models(content: str, owner: Optional[str] = None) -> Dict
         return {"error": str(e), "exit_code": 1}
 
 
-async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Dict:
+async def do_adopt_served_model(content: str, owner: str | None = None) -> dict:
     """Register an externally-launched model server (bash + tmux + ssh, or
     anything else) into the Cookbook so it appears in list_served_models,
     can be stopped via stop_served_model, and is added to the user's
@@ -3675,7 +3572,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
     }
 
 
-async def do_list_cookbook_servers(content: str, owner: Optional[str] = None) -> Dict:
+async def do_list_cookbook_servers(content: str, owner: str | None = None) -> dict:
     """List the cookbook's configured servers and which one is the
     current default. Use this to decide where to download/serve a
     model, or to show the user options when the target host is
@@ -3699,7 +3596,7 @@ async def do_list_cookbook_servers(content: str, owner: Optional[str] = None) ->
     return {"output": "\n".join(lines), "servers": hosts, "default_host": default, "exit_code": 0}
 
 
-async def do_list_serve_presets(content: str, owner: Optional[str] = None) -> Dict:
+async def do_list_serve_presets(content: str, owner: str | None = None) -> dict:
     """List saved serve presets from cookbook_state.json. Each preset
     is a launch template: name, model, host, port, cmd. Use this to
     discover what the user has previously configured so you can
@@ -3739,7 +3636,7 @@ async def do_list_serve_presets(content: str, owner: Optional[str] = None) -> Di
     return {"output": "\n".join(lines), "presets": presets, "exit_code": 0}
 
 
-async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
+async def do_serve_preset(content: str, owner: str | None = None) -> dict:
     """Launch a saved serve preset by name. Resolves the preset's
     cmd + host + model from cookbook_state.json, then calls the
     standard model/serve endpoint. Saves the agent from having to
@@ -3784,7 +3681,7 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
     if not repo_id or not cmd:
         return {"error": f"Preset {chosen.get('name')!r} is missing model or cmd — can't launch.", "exit_code": 1}
 
-    payload: Dict[str, Any] = {"repo_id": repo_id, "cmd": cmd}
+    payload: dict[str, Any] = {"repo_id": repo_id, "cmd": cmd}
     if host:
         payload["remote_host"] = host
     # Resolve per-host env settings the same way the UI does — pulls
@@ -3815,7 +3712,7 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": str(e), "exit_code": 1}
 
 
-async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Dict:
+async def do_list_cached_models(content: str, owner: str | None = None) -> dict:
     """List models already cached locally and/or on remote hosts.
 
     With no `host` arg, scans EVERY configured Cookbook server (and local)
@@ -3833,7 +3730,7 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
     async def _scan_one(host_label: str, host_val: str, ssh_port: str = "",
                         platform: str = "", model_dir: str = "") -> list:
         """Hit /api/model/cached for one host; tag each returned model with its source."""
-        p: Dict[str, str] = {}
+        p: dict[str, str] = {}
         if host_val:
             p["host"] = host_val
         # Caller-provided override beats per-server config beats nothing.
@@ -3878,7 +3775,7 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
             logger.debug(f"server list fetch failed: {e}")
             st_data = {}
 
-        def _dirs_for(server_record: Dict[str, Any]) -> str:
+        def _dirs_for(server_record: dict[str, Any]) -> str:
             """Comma-joined modelDirs from a saved server record (Settings).
 
             Filters out the HF cache (~/.cache/huggingface/hub) — the backend
@@ -3995,7 +3892,7 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
 
 # ── Gallery tools ──
 
-async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
+async def do_edit_image(content: str, owner: str | None = None) -> dict:
     """Edit a gallery image (upscale, rembg, inpaint, harmonize)."""
     import httpx
     try:
@@ -4024,7 +3921,7 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
 
 # ── Research tools ──
 
-async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_research(content: str, owner: str | None = None) -> dict:
     """List, read/open, or delete saved deep-research results from the Library.
     Args (JSON): {"action": "list|read|delete", "id": "<id>", "search": "..."}.
     Research is stored as data/deep_research/<id>.json (query, summary, sources)."""
@@ -4102,7 +3999,7 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     return {"output": f"Research library ({len(items)} item{'s' if len(items) != 1 else ''}):\n{rows}", "exit_code": 0}
 
 
-async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict:
+async def do_trigger_research(content: str, owner: str | None = None) -> dict:
     """Start a live deep-research job that appears in the Deep Research
     sidebar. Hits /api/research/start (the same path the sidebar's
     'Research' button uses) so the session is discoverable + streamable
@@ -4115,7 +4012,7 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
     topic = args.get("topic", "") or args.get("query", "")
     if not topic:
         return {"error": "topic (or query) is required", "exit_code": 1}
-    payload: Dict[str, Any] = {"query": topic}
+    payload: dict[str, Any] = {"query": topic}
     # Optional knobs the research panel supports.
     if args.get("max_rounds") is not None:
         try: payload["max_rounds"] = int(args["max_rounds"])
@@ -4153,7 +4050,7 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
 
 # ── Contact tools ──
 
-async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
+async def do_resolve_contact(content: str, owner: str | None = None) -> dict:
     """Look up a contact by name. Searches: CardDAV -> email history -> memory."""
     import httpx
     try:
@@ -4207,7 +4104,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     return {"output": "\n".join(lines), "exit_code": 0}
 
 
-async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
+async def do_manage_contact(content: str, owner: str | None = None) -> dict:
     """Add / update / delete / list CardDAV contacts. Calls the contacts
     helpers IN-PROCESS rather than over HTTP — a server-side httpx call to
     /api/contacts/* carries no session cookie and would be rejected by
@@ -4280,7 +4177,7 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
 
 # ── Vaultwarden / Bitwarden CLI tools ──
 
-def _load_vault_config() -> Dict:
+def _load_vault_config() -> dict:
     """Load Vaultwarden config from data/vault.json."""
     from pathlib import Path
     p = Path("data/vault.json")
@@ -4292,7 +4189,7 @@ def _load_vault_config() -> Dict:
     return {}
 
 
-async def _run_bw(args: list, session: Optional[str] = None, input_text: Optional[str] = None) -> tuple:
+async def _run_bw(args: list, session: str | None = None, input_text: str | None = None) -> tuple:
     """Run a bw CLI command with optional session + stdin. Returns (stdout, stderr, returncode)."""
     import asyncio
     env = {}
@@ -4312,7 +4209,7 @@ async def _run_bw(args: list, session: Optional[str] = None, input_text: Optiona
     return stdout.decode(errors="replace").strip(), stderr.decode(errors="replace").strip(), proc.returncode
 
 
-async def do_vault_search(content: str, owner: Optional[str] = None) -> Dict:
+async def do_vault_search(content: str, owner: str | None = None) -> dict:
     """Search the vault by keyword. Returns matching item names + URLs, NO passwords."""
     try:
         args = _parse_tool_args(content)
@@ -4357,7 +4254,7 @@ async def do_vault_search(content: str, owner: Optional[str] = None) -> Dict:
     return {"output": "\n".join(lines), "exit_code": 0}
 
 
-async def do_vault_get(content: str, owner: Optional[str] = None) -> Dict:
+async def do_vault_get(content: str, owner: str | None = None) -> dict:
     """Retrieve a full vault entry (including password) by item ID. Logs access to assistant chat."""
     try:
         args = _parse_tool_args(content)
@@ -4415,7 +4312,7 @@ async def do_vault_get(content: str, owner: Optional[str] = None) -> Dict:
     return {"output": "\n".join(output), "exit_code": 0}
 
 
-async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
+async def do_vault_unlock(content: str, owner: str | None = None) -> dict:
     """Unlock the vault using a master password. Stores the resulting session key."""
     try:
         args = _parse_tool_args(content)

@@ -5,7 +5,7 @@ import base64
 def read_if_exists(path: str) -> str:
     """Read file if it exists, return empty string otherwise."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return f.read().strip()
     except Exception:
         return ""

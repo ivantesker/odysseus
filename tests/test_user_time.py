@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from src.chat_processor import ChatProcessor
 from src.user_time import (
@@ -19,7 +19,7 @@ def test_current_datetime_prompt_uses_browser_timezone():
     set_user_tz_offset(600)
     set_user_tz_name("Australia/Brisbane")
 
-    prompt = current_datetime_prompt(datetime(2026, 6, 1, 9, 16, tzinfo=timezone.utc))
+    prompt = current_datetime_prompt(datetime(2026, 6, 1, 9, 16, tzinfo=UTC))
 
     assert "Monday, June 1, 2026 (2026-06-01)" in prompt
     assert "User local time is 7:16 PM" in prompt
@@ -87,7 +87,7 @@ def test_calendar_relative_time_parser_handles_dotted_pm(monkeypatch):
     class FixedDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            value = datetime(2026, 6, 1, 9, 16, tzinfo=timezone.utc)
+            value = datetime(2026, 6, 1, 9, 16, tzinfo=UTC)
             if tz is not None:
                 return value.astimezone(tz)
             return value.replace(tzinfo=None)

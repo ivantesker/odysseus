@@ -48,6 +48,15 @@ ALWAYS_AVAILABLE = frozenset({
     "adopt_served_model",
     # Generic API loopback — the catch-all when no named tool fits.
     "app_api",
+    # Memory is ambient — "remember this" can follow any message regardless
+    # of topic. Without this, RAG drops it and the agent falls back to
+    # app_api /api/memory/add which fails with 422 on first attempt.
+    "manage_memory",
+    # Ask the user a multiple-choice question for a decision/clarification.
+    # Always reachable so the agent can pause and ask at any point.
+    "ask_user",
+    # Write back to the active plan (tick steps done / revise) during execution.
+    "update_plan",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
@@ -72,7 +81,7 @@ COLLECTION_NAME = "odysseus_tool_index"
 # ── Tool description registry ──
 # Each tool gets a searchable description that helps retrieval.
 # These are richer than the system prompt one-liners — they're for embedding.
-BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
+BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "bash": "Run shell commands on the server. Install packages, check files, git operations, curl, system info, process management, networking.",
     "python": "Execute Python code for computation, data processing, math, scripting, parsing, API calls. Not for writing code for the user.",
     "web_search": "Quick single web lookup for a fact, current event, or doc mid-task. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
@@ -107,6 +116,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "list_sessions": "List all chats with their metadata (the UI calls these 'chats'). Use for 'list my chats', 'rename all my chats' (list first, then manage_session to rename each).",
     "send_to_session": "Send a message to another chat. Cross-chat communication.",
     "search_chats": "Search through chat history across all sessions.",
+    "ask_user": "Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.",
+    "update_plan": "Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.",
     "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
     "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
     "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
@@ -165,7 +176,7 @@ class ToolIndex:
     def healthy(self):
         return self._healthy
 
-    def _embed(self, texts: List[str]) -> List[List[float]]:
+    def _embed(self, texts: list[str]) -> list[list[float]]:
         vecs = self._embedder.encode(texts, normalize_embeddings=True)
         if np is not None:
             return np.array(vecs, dtype=np.float32).tolist()
@@ -212,7 +223,7 @@ class ToolIndex:
         ).hexdigest()
         logger.info(f"Indexed {len(docs)} built-in tools")
 
-    def index_mcp_tools(self, mcp_mgr, disabled_map: Optional[Dict] = None):
+    def index_mcp_tools(self, mcp_mgr, disabled_map: dict | None = None):
         """Index MCP tool descriptions. Call after MCP servers connect/disconnect."""
         if not mcp_mgr:
             return
@@ -276,7 +287,7 @@ class ToolIndex:
         )
         logger.info(f"Indexed {len(docs)} MCP tools")
 
-    def retrieve(self, query: str, k: int = 8) -> List[str]:
+    def retrieve(self, query: str, k: int = 8) -> list[str]:
         """Retrieve the top-K most relevant tool names for a query."""
         try:
             query_embedding = self._embed([query])
@@ -448,8 +459,8 @@ class ToolIndex:
     }
 
     def get_tools_for_query(
-        self, query: str, k: int = 8, always_include: Optional[Set[str]] = None
-    ) -> Set[str]:
+        self, query: str, k: int = 8, always_include: set[str] | None = None
+    ) -> set[str]:
         """Get the set of tool names to include for a given user query."""
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
@@ -475,12 +486,12 @@ class ToolIndex:
 
 # ── Singleton ──
 
-_tool_index: Optional[ToolIndex] = None
+_tool_index: ToolIndex | None = None
 _last_attempt = 0.0
 _RETRY_INTERVAL = 30.0
 
 
-def get_tool_index() -> Optional[ToolIndex]:
+def get_tool_index() -> ToolIndex | None:
     """Get or create the singleton ToolIndex. Returns None if unavailable."""
     global _tool_index, _last_attempt
 

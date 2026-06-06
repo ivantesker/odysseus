@@ -163,14 +163,14 @@ class ChatProcessor:
         use_web: bool = False,
         use_rag: bool = True,
         use_memory: bool = True,
-        time_filter: Optional[str] = None,
-        preset_system_prompt: Optional[str] = None,
-        owner: Optional[str] = None,
-        character_name: Optional[str] = None,
+        time_filter: str | None = None,
+        preset_system_prompt: str | None = None,
+        owner: str | None = None,
+        character_name: str | None = None,
         agent_mode: bool = False,
         incognito: bool = False,
         use_skills: bool = True,
-    ) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]], List[Dict[str, str]]]:
+    ) -> tuple[list[dict[str, str]], list[dict[str, Any]], list[dict[str, str]]]:
         """Build the context preface for LLM calls.
 
         Returns:
@@ -315,7 +315,7 @@ class ChatProcessor:
                 logger.debug(f"Skills index unavailable: {e}")
                 idx = []
             if idx:
-                by_cat: Dict[str, list] = {}
+                by_cat: dict[str, list] = {}
                 for s in idx:
                     by_cat.setdefault(s.get("category") or "general", []).append(s)
                 lines = ["[Available skills — call manage_skills(action='view', name='...') to load one when relevant]"]

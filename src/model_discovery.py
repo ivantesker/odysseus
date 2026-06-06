@@ -1,6 +1,3 @@
-import subprocess
-import json
-import time
 import httpx
 import logging
 import os
@@ -10,103 +7,25 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-# Cache for discovered hosts
-_hosts_cache: List[str] = []
-_hosts_cache_time: float = 0
-_HOSTS_CACHE_TTL = 60  # seconds
-
-
-def _parse_tailscale_status(raw: str) -> Dict[str, Any]:
-    try:
-        data = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _first_tailscale_ipv4(value: Any) -> Optional[str]:
-    if not isinstance(value, list):
-        return None
-    for ip in value:
-        if isinstance(ip, str) and "." in ip:
-            return ip
-    return None
-
-
-def discover_tailscale_hosts() -> List[str]:
-    """Discover online Tailscale peers, returning their IPv4 addresses."""
-    global _hosts_cache, _hosts_cache_time
-
-    now = time.time()
-    if _hosts_cache and (now - _hosts_cache_time) < _HOSTS_CACHE_TTL:
-        return list(_hosts_cache)
-
-    hosts = []
-    try:
-        result = subprocess.run(
-            ["tailscale", "status", "--json"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode != 0:
-            return hosts
-
-        data = _parse_tailscale_status(result.stdout)
-        if not data:
-            return hosts
-
-        # Add self
-        self_data = data.get("Self") if isinstance(data.get("Self"), dict) else {}
-        self_ip = _first_tailscale_ipv4(self_data.get("TailscaleIPs"))
-        if self_ip:
-            hosts.append(self_ip)
-
-        # Add online peers (skip funnel-ingress-nodes and android devices)
-        peers = data.get("Peer") if isinstance(data.get("Peer"), dict) else {}
-        for peer in peers.values():
-            if not isinstance(peer, dict):
-                continue
-            if not peer.get("Online"):
-                continue
-            hostname = peer.get("HostName", "")
-            if hostname == "funnel-ingress-node":
-                continue
-            os_name = peer.get("OS", "")
-            if os_name == "android":
-                continue
-            peer_ip = _first_tailscale_ipv4(peer.get("TailscaleIPs"))
-            if peer_ip:
-                hosts.append(peer_ip)
-
-        _hosts_cache = hosts
-        _hosts_cache_time = now
-        logger.info(f"Tailscale discovery found {len(hosts)} hosts: {hosts}")
-    except FileNotFoundError:
-        logger.debug("tailscale command not found")
-    except Exception as e:
-        logger.warning(f"Tailscale discovery failed: {e}")
-
-    return hosts
-
 
 class ModelDiscovery:
-    def __init__(self, default_host: str, openai_api_key: Optional[str] = None):
+    def __init__(self, default_host: str):
         self.default_host = default_host
-        self.openai_api_key = openai_api_key
         self.openai_compat_path = "/v1/chat/completions"
         # Custom ports from env vars, merged into the scan list by discover_models.
         self._extra_ports: set = set()
 
-    def _get_hosts(self) -> List[str]:
+    def _get_hosts(self) -> list[str]:
         """Get all hosts to scan, using env override, Tailscale, or default."""
         self._extra_ports = set()
 
-        def _append_host(out: List[str], host: str) -> None:
+        def _append_host(out: list[str], host: str) -> None:
             host = (host or "").strip()
             if not host or host in out:
                 return
             out.append(host)
 
-        def _append_env_hosts(out: List[str]) -> None:
+        def _append_env_hosts(out: list[str]) -> None:
             """Add hosts (and any custom ports) from provider-specific env vars."""
             for env_name in ("OLLAMA_BASE_URL", "OLLAMA_URL", "LM_STUDIO_URL"):
                 raw = os.getenv(env_name, "").strip()
@@ -131,16 +50,6 @@ class ModelDiscovery:
             _append_env_hosts(hosts)
             return hosts
 
-        # Try Tailscale discovery
-        ts_hosts = discover_tailscale_hosts()
-        if ts_hosts:
-            # Ensure default_host is included
-            if self.default_host not in ts_hosts:
-                ts_hosts.insert(0, self.default_host)
-            _append_host(ts_hosts, "host.docker.internal")
-            _append_env_hosts(ts_hosts)
-            return ts_hosts
-
         hosts = [self.default_host]
         # Docker desktop/Linux compose maps this to the host machine. That is
         # the common "I started Ollama normally on this computer" case.
@@ -148,7 +57,7 @@ class ModelDiscovery:
         _append_env_hosts(hosts)
         return hosts
 
-    def _fingerprint_provider(self, host: str, port: int) -> Optional[str]:
+    def _fingerprint_provider(self, host: str, port: int) -> str | None:
         """Identify the server software via its native API, independent of port."""
         try:
             r = httpx.get(f"http://{host}:{port}/api/v1/models", timeout=1.5)
@@ -162,7 +71,7 @@ class ModelDiscovery:
             pass
         return None
 
-    def _check_port(self, host: str, port: int) -> Optional[Dict[str, Any]]:
+    def _check_port(self, host: str, port: int) -> dict[str, Any] | None:
         """Check a single host:port for models."""
         base = f"http://{host}:{port}/v1"
         try:
@@ -184,7 +93,7 @@ class ModelDiscovery:
             pass
         return None
 
-    def discover_models(self) -> Dict[str, List[Dict[str, Any]]]:
+    def discover_models(self) -> dict[str, list[dict[str, Any]]]:
         """Discover available models from all reachable hosts."""
         hosts = self._get_hosts()
         items = []
@@ -215,23 +124,9 @@ class ModelDiscovery:
         logger.info(f"Discovered {len(items)} model endpoints across {len(hosts)} hosts")
         return {"hosts": hosts, "items": items}
 
-    def get_providers(self) -> Dict[str, Any]:
-        """Get all available providers"""
+    def get_providers(self) -> dict[str, Any]:
+        """Get all discovered local providers."""
         discovery = self.discover_models()
         items = discovery["items"]
-        providers = [{"provider": "vllm", "hosts": discovery["hosts"], "items": items}]
-
-        if self.openai_api_key:
-            openai_models = [
-                "gpt-5.2-codex", "gpt-4o-mini", "gpt-image-1.5",
-                "gpt-4o", "gpt-5.2", "gpt-5.2-pro",
-            ]
-            providers.append({
-                "provider": "openai",
-                "items": [{
-                    "url": "https://api.openai.com/v1/chat/completions",
-                    "models": openai_models
-                }]
-            })
-
+        providers = [{"provider": "local", "hosts": discovery["hosts"], "items": items}]
         return {"providers": providers}

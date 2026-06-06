@@ -25,7 +25,7 @@ def _tracked(paths_under):
     try:
         out = subprocess.run(
             ["git", "ls-files", paths_under],
-            cwd=REPO, capture_output=True, text=True, timeout=30,
+            cwd=REPO, capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
         return None

@@ -5,8 +5,9 @@ import json
 import os
 import time
 import logging
-from datetime import datetime
-from typing import Dict, Any, AsyncGenerator, List
+from datetime import datetime, UTC
+from typing import Dict, Any, List
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
@@ -43,7 +44,7 @@ from src.action_intents import classify_tool_intent as _classify_tool_intent
 logger = logging.getLogger(__name__)
 
 # Track active streams for partial-save safety net
-_active_streams: Dict[str, dict] = {}
+_active_streams: dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 
 
@@ -91,7 +92,7 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         if db_session:
             db_session.endpoint_url = ""
             db_session.model = ""
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
             db.commit()
         sess.endpoint_url = ""
         sess.model = ""
@@ -214,7 +215,7 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         db_session = db.query(DBSession).filter(DBSession.id == session_id).first()
         if db_session:
             db_session.model = model
-            db_session.updated_at = datetime.utcnow()
+            db_session.updated_at = datetime.now(UTC).replace(tzinfo=None)
             db.commit()
         sess.model = model
         logger.info(
@@ -266,8 +267,8 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     # POST /api/chat (non-streaming)
     # ------------------------------------------------------------------ #
-    @router.post("/api/chat", response_model=Dict[str, str])
-    async def chat_endpoint(request: Request, chat_request: ChatRequest) -> Dict[str, str]:
+    @router.post("/api/chat", response_model=dict[str, str])
+    async def chat_endpoint(request: Request, chat_request: ChatRequest) -> dict[str, str]:
         _set_user_time_from_request(request)
 
         message = chat_request.message
@@ -285,7 +286,7 @@ def setup_chat_routes(
         try:
             sess = session_manager.get_session(session)
         except KeyError:
-            raise HTTPException(404, f"Session '{session}' not found")
+            raise HTTPException(404, f"Session '{session}' not found") from None
         owner = get_current_user(request)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
@@ -372,11 +373,11 @@ def setup_chat_routes(
                 try:
                     body = await request.json()
                 except json.JSONDecodeError as e:
-                    raise HTTPException(400, f"Invalid JSON: {e}")
+                    raise HTTPException(400, f"Invalid JSON: {e}") from e
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(400, f"Request parsing error: {e}")
+            raise HTTPException(400, f"Request parsing error: {e}") from e
 
         _set_user_time_from_request(request)
 
@@ -394,6 +395,7 @@ def setup_chat_routes(
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
+        plan_mode = str(form_data.get("plan_mode", "")).lower() == "true"
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
         # Workspace: confine the agent's file/shell tools to this folder. Validate
         # it's a real directory; ignore (no confinement) otherwise.
@@ -401,6 +403,17 @@ def setup_chat_routes(
         if workspace:
             _ws_real = os.path.realpath(os.path.expanduser(workspace))
             workspace = _ws_real if os.path.isdir(_ws_real) else ""
+        # Plan mode is a modifier on agent mode — it only makes sense with tools.
+        if plan_mode:
+            chat_mode = "agent"
+        # An approved plan being EXECUTED: the frontend sends the checklist back
+        # on each turn so we can pin it in context. This way a long plan on a
+        # weak model survives history truncation — the agent can always re-read
+        # the plan. Ignored while still proposing (plan_mode on). Capped so a
+        # huge plan can't blow the prompt.
+        approved_plan = ""
+        if not plan_mode:
+            approved_plan = (form_data.get("approved_plan") or "").strip()[:8192]
         # Did the USER explicitly pick agent mode? (vs. us auto-escalating
         # below). Skill extraction should only learn from real agent sessions,
         # not chats we quietly promoted for a notes/calendar intent.
@@ -455,9 +468,9 @@ def setup_chat_routes(
                     "No model selected for this chat. Open the model picker and choose one before sending.",
                 )
         except SessionNotFoundError as e:
-            raise HTTPException(404, str(e))
+            raise HTTPException(404, str(e)) from e
         except (ValueError, ValidationError):
-            raise HTTPException(400, "Invalid request parameters")
+            raise HTTPException(400, "Invalid request parameters") from None
 
         # ------------------------------------------------------------------ #
         # Privilege gates that must fire BEFORE any LLM work / token spend.
@@ -658,6 +671,13 @@ def setup_chat_routes(
             # In chat mode compare, disable ALL agent tools (no bash, python, file ops)
             if chat_mode == 'chat':
                 disabled_tools.update({"bash", "python", "read_file", "write_file", "web_search", "web_fetch", "search_chats", "manage_tasks"})
+
+        # Plan mode: investigate read-only, propose a plan, don't mutate. Block
+        # every tool not on the read-only allowlist. (stream_agent_loop enforces
+        # this again + drops MCP, so this is belt-and-suspenders.)
+        if plan_mode:
+            from src.tool_security import plan_mode_disabled_tools
+            disabled_tools.update(plan_mode_disabled_tools())
 
         async def stream_with_save() -> AsyncGenerator[str, None]:
             # _effective_mode is read-only here; closure captures it from
@@ -1015,6 +1035,8 @@ def setup_chat_routes(
                         owner=_user,
                         fallbacks=_fallback_candidates,
                         workspace=workspace or None,
+                        plan_mode=plan_mode,
+                        approved_plan=approved_plan or None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1035,6 +1057,8 @@ def setup_chat_routes(
                                     "doc_stream_open", "doc_stream_delta",
                                     "doc_update", "doc_suggestions", "ui_control",
                                     "rounds_exhausted",
+                                    "ask_user",
+                                    "plan_update",
                                 ):
                                     if data.get("type") == "agent_step":
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))
@@ -1134,7 +1158,7 @@ def setup_chat_routes(
     # no longer stops it (it's detached), so the Stop button must call this.
     # ------------------------------------------------------------------ #
     @router.post("/api/chat/stop/{session_id}")
-    async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
+    async def chat_stop(request: Request, session_id: str) -> dict[str, Any]:
         _verify_session_owner(request, session_id)
         stopped = agent_runs.stop(session_id)
         return {"stopped": stopped}
@@ -1143,7 +1167,7 @@ def setup_chat_routes(
     # GET /api/chat/stream_status — check if a stream is active for a session
     # ------------------------------------------------------------------ #
     @router.get("/api/chat/stream_status/{session_id}")
-    async def chat_stream_status(request: Request, session_id: str) -> Dict[str, Any]:
+    async def chat_stream_status(request: Request, session_id: str) -> dict[str, Any]:
         _verify_session_owner(request, session_id)
         # A detached run can still be going even if _active_streams was popped;
         # report it as active so the client knows to reconnect via /resume.
@@ -1161,7 +1185,7 @@ def setup_chat_routes(
     # POST /api/inject_context
     # ------------------------------------------------------------------ #
     @router.post("/api/inject_context/{session_id}")
-    async def inject_context(request: Request, session_id: str, context: str = Form(...)) -> Dict[str, str]:
+    async def inject_context(request: Request, session_id: str, context: str = Form(...)) -> dict[str, str]:
         _verify_session_owner(request, session_id)
         try:
             sess = session_manager.get_session(session_id)
@@ -1170,7 +1194,7 @@ def setup_chat_routes(
             session_manager.save_sessions()
             return {"status": "context_injected"}
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
 
     # ------------------------------------------------------------------ #
     # GET /api/search — search across chat messages
@@ -1180,7 +1204,7 @@ def setup_chat_routes(
         request: Request,
         q: str = Query("", min_length=0),
         limit: int = Query(20, ge=1, le=100),
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if not q or not q.strip():
             return []
 
@@ -1238,7 +1262,7 @@ def setup_chat_routes(
         try:
             body = await request.json()
         except Exception:
-            raise HTTPException(400, "Invalid JSON")
+            raise HTTPException(400, "Invalid JSON") from None
 
         session_id = body.get("session_id")
         original_text = body.get("original_text", "")
@@ -1252,7 +1276,7 @@ def setup_chat_routes(
         try:
             sess = session_manager.get_session(session_id)
         except (KeyError, SessionNotFoundError):
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
 
         messages = [
             {"role": "system", "content": (

@@ -206,7 +206,7 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
         # Fail closed — a DB hiccup must not let cross-tenant access slip
         # through. 503 tells the caller to retry; logs preserve detail.
         logger.error(f"Account-owner check failed: {e}")
-        raise HTTPException(503, "Account check failed")
+        raise HTTPException(503, "Account check failed") from e
 
 def _q(name: str) -> str:
     """Quote an IMAP mailbox name. Defensive: escapes `\\` and `"` and wraps
@@ -1417,25 +1417,25 @@ _EMAIL_REPLY_SYS_PROMPT_BASE = (
 
 class SendEmailRequest(BaseModel):
     to: str
-    cc: Optional[str] = None
-    bcc: Optional[str] = None
+    cc: str | None = None
+    bcc: str | None = None
     subject: str
     body: str
     # WYSIWYG compose sends the rendered HTML here; the server sanitizes it and
     # uses it for the text/html part (body stays the plain-text fallback). When
     # absent, the server renders markdown from `body` instead.
-    body_html: Optional[str] = None
-    in_reply_to: Optional[str] = None
-    references: Optional[str] = None
+    body_html: str | None = None
+    in_reply_to: str | None = None
+    references: str | None = None
     # List of uploaded attachment tokens (filenames in COMPOSE_UPLOADS_DIR)
-    attachments: Optional[List[str]] = None
+    attachments: list[str] | None = None
     # Which account to send from. None = default account.
-    account_id: Optional[str] = None
+    account_id: str | None = None
     # Internal marker for Odysseus-generated mail (e.g. reminder, scheduled).
-    odysseus_kind: Optional[str] = None
+    odysseus_kind: str | None = None
     # If true, /send waits for SMTP + Sent append and returns the sent UID.
     wait_for_delivery: bool = False
 
 
 class ExtractStyleRequest(BaseModel):
-    sample_count: Optional[int] = 20
+    sample_count: int | None = 20

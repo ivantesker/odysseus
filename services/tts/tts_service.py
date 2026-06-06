@@ -76,7 +76,7 @@ class TTSService:
         raw = f"{provider}|{model}|{voice}|{speed}|{text}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def _get_cached(self, key: str) -> Optional[bytes]:
+    def _get_cached(self, key: str) -> bytes | None:
         for ext in (".mp3", ".wav"):
             path = self.cache_dir / f"{key}{ext}"
             if path.exists():
@@ -103,7 +103,7 @@ class TTSService:
 
     # ── API endpoint ──
 
-    def _synthesize_api(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0) -> Optional[bytes]:
+    def _synthesize_api(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0) -> bytes | None:
         from src.database import SessionLocal, ModelEndpoint
 
         db = SessionLocal()
@@ -141,7 +141,7 @@ class TTSService:
 
     # ── Public interface ──
 
-    def synthesize(self, text: str, use_cache: bool = True) -> Optional[bytes]:
+    def synthesize(self, text: str, use_cache: bool = True) -> bytes | None:
         settings = self._load_settings()
         if settings.get("tts_enabled") is False:
             return None
@@ -185,7 +185,7 @@ class TTSService:
 
         return audio_data
 
-    def synthesize_to_base64(self, text: str) -> Optional[str]:
+    def synthesize_to_base64(self, text: str) -> str | None:
         import base64
         audio = self.synthesize(text)
         if audio:
@@ -195,7 +195,7 @@ class TTSService:
     def set_voice(self, voice: str):
         """Legacy no-op — voice is now managed via admin settings."""
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         settings = self._load_settings()
         provider = settings["tts_provider"]
         tts_enabled = settings.get("tts_enabled", True)
@@ -257,7 +257,7 @@ class _KokoroPipeline:
         except Exception as e:
             logger.error(f"Kokoro init failed: {e}", exc_info=True)
 
-    def synthesize_raw(self, text: str, voice: str = "af_heart") -> Optional[bytes]:
+    def synthesize_raw(self, text: str, voice: str = "af_heart") -> bytes | None:
         if not self.available:
             return None
         try:

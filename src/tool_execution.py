@@ -13,9 +13,11 @@ import json
 import logging
 import os
 import pathlib
+import re
 import sys
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
+from collections.abc import Awaitable, Callable
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 
@@ -31,7 +33,7 @@ MAX_READ_CHARS = 20_000
 MAX_DIFF_LINES = 400  # cap unified-diff size returned to the UI
 
 
-def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
+def _unified_diff(old: str, new: str, path: str) -> dict[str, Any] | None:
     """Build a unified diff of a file write for display in the chat.
 
     Returns {"text": <unified diff>, "added": N, "removed": M, "new_file": bool}
@@ -67,7 +69,7 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
     }
 
 
-async def _do_edit_file(content: str, workspace: Optional[str] = None) -> Dict[str, Any]:
+async def _do_edit_file(content: str, workspace: str | None = None) -> dict[str, Any]:
     """Exact string-replacement edit of an on-disk file.
 
     content is JSON: {"path", "old_string", "new_string", "replace_all"?}.
@@ -98,7 +100,7 @@ async def _do_edit_file(content: str, workspace: Optional[str] = None) -> Dict[s
         return {"error": "edit_file: old_string and new_string are identical", "exit_code": 1}
 
     def _apply():
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             original = f.read()
         count = original.count(old)
         if count == 0:
@@ -302,7 +304,7 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
             if os.path.commonpath([os.path.normcase(resolved), nbase]) != nbase:
                 raise ValueError
         except ValueError:
-            raise ValueError(f"path '{raw_path}' is outside the workspace ({workspace})")
+            raise ValueError(f"path '{raw_path}' is outside the workspace ({workspace})") from None
     return resolved
 
 # Bash + python tools used to share a single 60s timeout. That's
@@ -347,7 +349,7 @@ _CODENAV_MAX_HITS = 200
 _CODENAV_MAX_LINE = 400
 
 
-def _resolve_search_root(raw_path: str, workspace: Optional[str] = None) -> str:
+def _resolve_search_root(raw_path: str, workspace: str | None = None) -> str:
     """Resolve + confine a code-nav path (grep/glob/ls).
 
     With a workspace set, the workspace folder is the root and supplied paths are
@@ -378,8 +380,8 @@ async def _run_subprocess_streaming(
     proc: asyncio.subprocess.Process,
     *,
     timeout: float,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-) -> Tuple[str, str, Optional[int], bool]:
+    progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+) -> tuple[str, str, int | None, bool]:
     """Run a subprocess to completion, streaming progress.
 
     Reads stdout + stderr line-by-line into ring buffers so a
@@ -435,7 +437,7 @@ async def _run_subprocess_streaming(
     timed_out = False
     try:
         await asyncio.wait_for(proc.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         timed_out = True
         try:
             proc.kill()
@@ -499,7 +501,7 @@ _ADMIN_TOOLS = {
 }
 
 
-def _owner_is_admin(owner: Optional[str]) -> bool:
+def _owner_is_admin(owner: str | None) -> bool:
     """Mirror route-level admin behavior for agent tool execution."""
     return owner_is_admin_or_single_user(owner)
 
@@ -519,7 +521,7 @@ _MCP_TOOL_MAP = {
 }
 
 
-def _parse_generate_image(content: str) -> Dict:
+def _parse_generate_image(content: str) -> dict:
     lines = content.strip().split("\n")
     args = {"prompt": lines[0].strip() if lines else ""}
     for i, key in enumerate(["model", "size", "quality"], 1):
@@ -528,7 +530,7 @@ def _parse_generate_image(content: str) -> Dict:
     return args
 
 
-def _parse_manage_memory(content: str) -> Dict:
+def _parse_manage_memory(content: str) -> dict:
     lines = content.strip().split("\n")
     action = lines[0].strip().lower() if lines else ""
     args = {"action": action}
@@ -549,12 +551,12 @@ def _parse_manage_memory(content: str) -> Dict:
     return args
 
 
-def _parse_write_file(content: str) -> Dict:
+def _parse_write_file(content: str) -> dict:
     lines = content.split("\n", 1)
     return {"path": lines[0].strip(), "content": lines[1] if len(lines) > 1 else ""}
 
 
-_MCP_ARG_PARSERS: Dict[str, callable] = {
+_MCP_ARG_PARSERS: dict[str, callable] = {
     "bash":           lambda c: {"command": c},
     "python":         lambda c: {"code": c},
     "web_search":     lambda c: {"query": c.split("\n")[0].strip()},
@@ -566,7 +568,7 @@ _MCP_ARG_PARSERS: Dict[str, callable] = {
 }
 
 
-def _build_mcp_args(tool: str, content: str) -> Dict:
+def _build_mcp_args(tool: str, content: str) -> dict:
     """Convert fenced-block text content to structured MCP arguments."""
     parser = _MCP_ARG_PARSERS.get(tool)
     return parser(content) if parser else {}
@@ -575,9 +577,9 @@ def _build_mcp_args(tool: str, content: str) -> Dict:
 async def _call_mcp_tool(
     tool: str,
     content: str,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-    workspace: Optional[str] = None,
-) -> Dict:
+    progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+    workspace: str | None = None,
+) -> dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     mcp = get_mcp_manager()
     if not mcp:
@@ -594,7 +596,38 @@ async def _call_mcp_tool(
         if fallback:
             return fallback
 
+    # generate_image runs as a text-only MCP tool, so the saved image URL never
+    # reaches the agent loop's structured forwarding (which renders the image via
+    # buildImageBubble on result["image_url"]). Lift it out of the tool's stdout so
+    # the image renders deterministically — no dependence on the model echoing the
+    # URL into its prose (which it mangles/hallucinates).
+    if tool == "generate_image":
+        _promote_image_fields(result)
+
     return result
+
+
+def _promote_image_fields(result: dict) -> None:
+    """Lift the image URL (+ prompt/model/size) from a successful generate_image MCP
+    text result into structured fields the agent loop already forwards to
+    buildImageBubble. Only acts on a dict result with exit_code 0; matches the
+    generated-image URL by pattern (absolute or relative) so it's robust to the
+    result's wording."""
+    if not isinstance(result, dict) or result.get("exit_code") != 0:
+        return
+    out = result.get("stdout") or ""
+    m = re.search(r'(?:https?://[^\s)\]]+)?/api/generated-image/[A-Za-z0-9._-]+', out)
+    if not m:
+        return
+    result["image_url"] = m.group(0).strip()
+    for field, pat in (
+        ("image_prompt", r'^Generated image for:\s*(.+)$'),
+        ("image_model", r'^model:\s*(.+)$'),
+        ("image_size", r'^size:\s*(.+)$'),
+    ):
+        fm = re.search(pat, out, re.M)
+        if fm:
+            result[field] = fm.group(1).strip()
 
 
 _BG_MARKERS = {"#!bg", "#bg", "# bg", "#background", "# background", "@background", "# @background"}
@@ -616,9 +649,9 @@ def _split_bg_marker(content: str):
 async def _direct_fallback(
     tool: str,
     content: str,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-    workspace: Optional[str] = None,
-) -> Optional[Dict]:
+    progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+    workspace: str | None = None,
+) -> dict | None:
     """In-process execution path for the eight tools that used to live as
     stdio MCP servers under mcp_servers/. Those servers were deleted in
     favor of native execution; this function is now the canonical path,
@@ -721,7 +754,7 @@ async def _direct_fallback(
                         # Line-range read: slice [offset, offset+limit).
                         start = max(offset, 1)
                         out, n, budget = [], 0, MAX_READ_CHARS
-                        with open(path, "r", encoding="utf-8", errors="replace") as f:
+                        with open(path, encoding="utf-8", errors="replace") as f:
                             for i, line in enumerate(f, 1):
                                 if i < start:
                                     continue
@@ -734,7 +767,7 @@ async def _direct_fallback(
                                     out.append(f"\n... [truncated at {MAX_READ_CHARS} chars]")
                                     break
                         return "".join(out)
-                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    with open(path, encoding="utf-8", errors="replace") as f:
                         return f.read(MAX_READ_CHARS + 1)
                 data = await asyncio.to_thread(_read)
             except FileNotFoundError:
@@ -764,7 +797,7 @@ async def _direct_fallback(
                     # before/after diff. Missing/binary file → treat as empty.
                     old = ""
                     try:
-                        with open(path, "r", encoding="utf-8") as f:
+                        with open(path, encoding="utf-8") as f:
                             old = f.read()
                     except (FileNotFoundError, IsADirectoryError, UnicodeDecodeError, OSError):
                         old = ""
@@ -788,7 +821,7 @@ async def _direct_fallback(
         if tool == "grep":
             # Args (JSON): {pattern, path?, glob?, ignore_case?, max_results?}.
             # Bare string → treated as the pattern.
-            args: Dict[str, Any] = {}
+            args: dict[str, Any] = {}
             _s = (content or "").strip()
             if _s.startswith("{"):
                 try:
@@ -858,7 +891,7 @@ async def _direct_fallback(
                     if len(hits) >= max_hits:
                         break
                     try:
-                        with open(fp, "r", encoding="utf-8", errors="strict") as f:
+                        with open(fp, encoding="utf-8", errors="strict") as f:
                             for i, line in enumerate(f, 1):
                                 if rx.search(line):
                                     hits.append(f"{fp}:{i}:{line.rstrip()[:_CODENAV_MAX_LINE]}")
@@ -1060,7 +1093,7 @@ async def _direct_fallback(
                     loop.run_in_executor(None, lambda: fetch_webpage_content(url, timeout=10)),
                     timeout=30,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return {"error": f"web_fetch: timed out fetching {url}", "exit_code": 1}
             except Exception as e:
                 # Direct URL fetches can hit bot protection / auth walls
@@ -1099,12 +1132,12 @@ async def _direct_fallback(
 
 async def execute_tool_block(
     block: Any,
-    session_id: Optional[str] = None,
-    disabled_tools: Optional[set] = None,
-    owner: Optional[str] = None,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-    workspace: Optional[str] = None,
-) -> Tuple[str, Dict]:
+    session_id: str | None = None,
+    disabled_tools: set | None = None,
+    owner: str | None = None,
+    progress_cb: Callable[[dict], Awaitable[None]] | None = None,
+    workspace: str | None = None,
+) -> tuple[str, dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
     `progress_cb` is forwarded to long-running subprocess tools
@@ -1182,6 +1215,88 @@ async def execute_tool_block(
             "exit_code": 1,
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
+        return desc, result
+
+    # ask_user: the agent poses a multiple-choice question to the user to get a
+    # decision/clarification. This is a pure UI-control marker — no subprocess,
+    # no filesystem. It returns an `ask_user` payload that the agent loop turns
+    # into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
+    # the user's selection (their choice arrives as the next message).
+    if tool == "ask_user":
+        import json as _json
+        question, options, multi = "", [], False
+        raw = (content or "").strip()
+        try:
+            parsed = _json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            parsed = {}
+        if isinstance(parsed, dict):
+            question = str(parsed.get("question", "")).strip()
+            multi = bool(parsed.get("multi") or parsed.get("multiSelect"))
+            for opt in (parsed.get("options") or []):
+                if isinstance(opt, dict):
+                    label = str(opt.get("label", "")).strip()
+                    descr = str(opt.get("description", "")).strip()
+                elif isinstance(opt, str):
+                    label, descr = opt.strip(), ""
+                else:
+                    continue
+                if label:
+                    options.append({"label": label, "description": descr})
+        else:
+            question = raw
+        if not question or len(options) < 2:
+            return "ask_user: invalid", {
+                "error": (
+                    "ask_user needs a non-empty `question` and at least 2 `options` "
+                    "(each an object with a `label`, optional `description`)."
+                ),
+                "exit_code": 1,
+            }
+        options = options[:6]  # keep the choice list sane
+        desc = f"ask_user: {question[:80]}"
+        labels = ", ".join(o["label"] for o in options)
+        result = {
+            "ask_user": {"question": question, "options": options, "multi": multi},
+            "output": f"Asked the user: {question}\nOptions: {labels}\nAwaiting their selection.",
+            "exit_code": 0,
+        }
+        logger.info("Tool executed: %s (%d options, multi=%s)", desc, len(options), multi)
+        return desc, result
+
+    # update_plan: the agent writes back to the active plan — tick an item done
+    # or revise steps (e.g. when the user asks to change something). Pure UI
+    # marker: returns a `plan_update` payload the agent loop turns into a
+    # `plan_update` SSE event; the frontend replaces the stored plan and refreshes
+    # the docked plan window. Does NOT end the turn.
+    if tool == "update_plan":
+        import json as _json
+        raw = (content or "").strip()
+        plan = ""
+        try:
+            parsed = _json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            parsed = {}
+        if isinstance(parsed, dict) and parsed.get("plan"):
+            plan = str(parsed.get("plan", "")).strip()
+        else:
+            # Plain-string call (raw checklist) or JSON without a usable `plan`.
+            plan = raw
+        if not plan:
+            return "update_plan: invalid", {
+                "error": "update_plan needs a non-empty `plan` (the full updated checklist as markdown).",
+                "exit_code": 1,
+            }
+        plan = plan[:8192]
+        done = plan.count("- [x]") + plan.count("- [X]")
+        total = done + plan.count("- [ ]")
+        desc = f"update_plan: {done}/{total} done" if total else "update_plan"
+        result = {
+            "plan_update": {"plan": plan},
+            "output": f"Plan updated ({done}/{total} steps complete)." if total else "Plan updated.",
+            "exit_code": 0,
+        }
+        logger.info("Tool executed: %s", desc)
         return desc, result
 
     # Background execution: a `bash` block whose first line is the `#!bg`
@@ -1382,7 +1497,7 @@ _FORMATTER_HANDLED_KEYS = {
 }
 
 
-def format_tool_result(description: str, result: Dict) -> str:
+def format_tool_result(description: str, result: dict) -> str:
     """Format a tool result into text for feeding back to the LLM."""
     parts = [f"### {description}"]
 

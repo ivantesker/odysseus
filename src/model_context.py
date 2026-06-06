@@ -7,6 +7,7 @@ Provides token estimation for context usage tracking.
 
 import logging
 import sys
+import time
 from typing import Dict, List, Optional, Tuple
 
 from urllib.parse import urlparse
@@ -30,7 +31,7 @@ def _normalize_base_for_compare(url: str) -> str:
     return url
 
 
-def _configured_endpoint_kind(url: str) -> Optional[str]:
+def _configured_endpoint_kind(url: str) -> str | None:
     """Return configured endpoint kind for a chat/base URL when available."""
     target = _normalize_base_for_compare(url)
     if not target:
@@ -208,14 +209,23 @@ KNOWN_CONTEXT_WINDOWS = {
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
-_context_cache: Dict[Tuple[str, str], int] = {}
+_context_cache: dict[tuple[str, str], int] = {}
+# Local endpoints get a short-TTL cache instead of the permanent one: their real
+# window can change across a server restart (--max-model-len / a re-pulled
+# Ollama model), so we re-check periodically — but NOT on every turn. Before
+# this, every chat/agent turn made a live /v1/models (or /api/show) round-trip
+# to the local server just to size num_ctx and the compaction gate, adding a
+# network hop to each generation. 60s keeps it fresh while removing that hop.
+_LOCAL_CTX_TTL = 60.0
+_local_context_cache: dict[tuple[str, str], tuple[int, float]] = {}
 
 
 def get_context_length(endpoint_url: str, model: str) -> int:
     """Get the context window size for a model.
 
     Queries /v1/models on the endpoint and looks for context_length
-    or context_window fields. Caches result per (endpoint, model).
+    or context_window fields. Caches result per (endpoint, model) — permanently
+    for remote endpoints, with a short TTL for local ones.
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
     configured_kind = _configured_endpoint_kind(endpoint_url)
@@ -225,20 +235,26 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     # capped proxy vs. the full provider), so caching by model id alone would
     # serve one endpoint's window for the other (issue #2603).
     cache_key = (endpoint_url, model)
-    if not is_local and cache_key in _context_cache:
+    now = time.monotonic()
+    if is_local:
+        hit = _local_context_cache.get(cache_key)
+        if hit is not None and hit[1] > now:
+            return hit[0]
+    elif cache_key in _context_cache:
         return _context_cache[cache_key]
 
     ctx = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request.
-    # Local endpoints can restart with a different --max-model-len while keeping
-    # the same model id, so always re-query them instead of serving stale cache.
-    if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
+    if is_local:
+        if ctx != DEFAULT_CONTEXT:
+            _local_context_cache[cache_key] = (ctx, now + _LOCAL_CTX_TTL)
+    elif ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy"):
         _context_cache[cache_key] = ctx
     logger.info(f"Context length for {model}: {ctx}")
     return ctx
 
 
-def _lookup_known(model: str) -> Optional[int]:
+def _lookup_known(model: str) -> int | None:
     """Check known context windows by substring match.
 
     Picks the LONGEST matching key so a short key never shadows a more specific
@@ -248,8 +264,8 @@ def _lookup_known(model: str) -> Optional[int]:
     name = model.lower()
     basename = name.split("/")[-1] if "/" in name else name
     basename = basename.split(":")[0]  # strip :free, :extended etc.
-    best_key: Optional[str] = None
-    best_ctx: Optional[int] = None
+    best_key: str | None = None
+    best_ctx: int | None = None
     for key, ctx in KNOWN_CONTEXT_WINDOWS.items():
         if key in basename or key in name:
             if best_key is None or len(key) > len(best_key):
@@ -286,16 +302,6 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
                         return n_ctx
         except Exception:
             pass
-
-    # GitHub Copilot's /models requires auth + X-GitHub-Api-Version headers that
-    # aren't available here; an unauthenticated probe just 400s. All Copilot
-    # picker models are major API models covered by the known-context table, so
-    # rely on that instead of a doomed network call.
-    from src.copilot import is_copilot_base
-    if is_copilot_base(endpoint_url):
-        if known:
-            logger.info(f"Using known context window for {model}: {known}")
-        return known or DEFAULT_CONTEXT
 
     models_url = endpoint_url.replace("/chat/completions", "/models")
     try:
@@ -352,12 +358,16 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     return DEFAULT_CONTEXT
 
 
-def estimate_tokens(messages: List[Dict]) -> int:
+def estimate_tokens(messages: list[dict]) -> int:
     """Rough token estimate for a list of messages.
 
     Uses chars * 0.3 which is closer to real BPE tokenizer output
     than the commonly-cited chars/4 (which underestimates by ~20-30%).
-    Also adds ~4 tokens per message for role/formatting overhead.
+    Also adds ~4 tokens per message for role/formatting overhead, and counts
+    assistant tool_calls (name + arguments) — a tool-only turn carries
+    content=None with the real payload in tool_calls, so ignoring them made the
+    estimate (and the compaction/trim gates that rely on it) blind to large
+    tool arguments.
     """
     total = 0
     for msg in messages:
@@ -369,4 +379,20 @@ def estimate_tokens(messages: List[Dict]) -> int:
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
                     total += int(len(item.get("text", "")) * 0.3)
+        # Tool calls carry real payload too: a tool-only assistant turn is stored
+        # with content=None and the actual args (e.g. a create_document body) in
+        # tool_calls[].function.arguments. Ignoring them made large tool arguments
+        # read as ~0 tokens, so the compaction/trim gates missed genuine overflow.
+        tool_calls = msg.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function") if isinstance(tc.get("function"), dict) else tc
+                name = fn.get("name", "") or ""
+                args = fn.get("arguments", "") or ""
+                if not isinstance(args, str):
+                    args = str(args)  # some shapes store arguments as a dict
+                total += 4  # per tool-call overhead (id, type, wrapper)
+                total += int((len(str(name)) + len(args)) * 0.3)
     return total

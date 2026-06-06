@@ -1,8 +1,11 @@
-# src/constants.py
-"""Application-wide constants and configuration values."""
+"""Application-wide constants and configuration values.
+
+Canonical source. `src.constants` re-exports from here so there is one source
+of truth (the two files previously drifted — notably APP_VERSION).
+"""
 import os
 
-APP_VERSION = "0.9.1"
+APP_VERSION = "1.0.0"
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
@@ -27,7 +30,6 @@ OPENAI_COMPAT_PATH = "/v1/chat/completions"
 # Environment variables with defaults
 DEFAULT_HOST = os.getenv("LLM_HOST", "localhost")
 LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip()]
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SEARXNG_INSTANCE = os.getenv('SEARXNG_INSTANCE', 'http://localhost:8080')
 
 

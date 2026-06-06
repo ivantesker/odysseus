@@ -51,7 +51,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Core imports
 from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
-    REQUEST_TIMEOUT, OPENAI_API_KEY,
+    REQUEST_TIMEOUT,
 )
 from core.database import SessionLocal, ApiToken
 from core.middleware import SecurityHeadersMiddleware
@@ -64,13 +64,14 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-)
+# Central config: level/file/format via env, per-request correlation ids, and
+# tamed third-party noise. See src/logging_setup.py.
+from src.logging_setup import configure_logging, request_id_var
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # ========= APP =========
@@ -138,7 +139,7 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
             return await call_next(request)
         try:
             return await _asyncio.wait_for(call_next(request), timeout=REQUEST_HARD_TIMEOUT)
-        except _asyncio.TimeoutError:
+        except TimeoutError:
             return _JSONResponse(
                 {"detail": f"Request exceeded {REQUEST_HARD_TIMEOUT:.0f}s timeout"},
                 status_code=504,
@@ -169,6 +170,7 @@ if AUTH_ENABLED:
         "/api/auth/integrations/presets",
         "/api/health",
         "/api/version",
+        "/api/v1/capabilities",
         "/login",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
@@ -361,8 +363,63 @@ if AUTH_ENABLED:
 else:
     logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
 
+
+# ========= REQUEST LOGGING =========
+# Added last so it is the OUTERMOST middleware: it assigns a request-id before
+# anything else runs (every log line during the request carries it) and logs the
+# outcome after auth has resolved the user. Unhandled exceptions are logged with
+# a full traceback here, then re-raised for FastAPI's normal error handling.
+import time as _time
+import uuid as _uuid
+
+_REQ_LOG = logging.getLogger("odysseus.request")
+# Don't spam one line per static asset / health poll; those are rarely useful
+# for debugging and drown out the signal.
+_REQ_LOG_SKIP_PREFIXES = ("/static", "/api/health")
+
+
+class RequestLoggingMiddleware(_BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        rid = _uuid.uuid4().hex[:8]
+        token = request_id_var.set(rid)
+        request.state.request_id = rid
+        start = _time.monotonic()
+        path = request.url.path
+        noisy = any(path.startswith(p) for p in _REQ_LOG_SKIP_PREFIXES)
+        try:
+            response = await call_next(request)
+        except Exception:
+            dur_ms = (_time.monotonic() - start) * 1000
+            _REQ_LOG.exception(
+                "%s %s -> EXCEPTION %.0fms user=%s",
+                request.method, path, dur_ms,
+                getattr(request.state, "current_user", "-"),
+            )
+            request_id_var.reset(token)
+            raise
+        dur_ms = (_time.monotonic() - start) * 1000
+        response.headers["X-Request-ID"] = rid
+        if not noisy or response.status_code >= 400:
+            level = logging.WARNING if response.status_code >= 500 else logging.INFO
+            _REQ_LOG.log(
+                level, "%s %s -> %s %.0fms user=%s",
+                request.method, path, response.status_code, dur_ms,
+                getattr(request.state, "current_user", "-"),
+            )
+        request_id_var.reset(token)
+        return response
+
+
+app.add_middleware(RequestLoggingMiddleware)
+
 # ========= STATIC FILES =========
 os.makedirs(STATIC_DIR, exist_ok=True)
+
+# When false, the core runs headless: the JSON API stays up but the bundled web
+# UI (static assets + SPA HTML routes) is not served. Lets a deploy front the
+# API with a different client (mobile companion, TUI, third-party) without
+# shipping the web bundle. The API itself is always available.
+SERVE_WEB_UI = os.getenv("SERVE_WEB_UI", "true").strip().lower() not in ("0", "false", "no", "off")
 
 
 class _RevalidatingStatic(StaticFiles):
@@ -381,19 +438,14 @@ class _RevalidatingStatic(StaticFiles):
         return resp
 
 
-app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
+if SERVE_WEB_UI:
+    app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
 
 # ========= GENERATED IMAGES =========
 @app.get("/api/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
-    from pathlib import Path
-    import re
-    if not re.match(r'^[a-f0-9]{8,64}\.(png|jpg|jpeg|webp|gif|mp4|mov|webm|mkv|m4v)$', filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    img_path = Path("data/generated_images") / filename
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+    img_path = resolve_generated_image_path(filename)
     # SECURITY: filename is the only key, so anyone who knows / guesses a
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
@@ -429,7 +481,7 @@ async def serve_generated_image(filename: str, request: Request):
     return FileResponse(
         str(img_path),
         media_type=mime,
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers=GENERATED_IMAGE_HEADERS,
     )
 
 # ========= YOUTUBE INIT =========
@@ -530,7 +582,7 @@ app.include_router(setup_workspace_routes())
 
 # Sessions
 from routes.session_routes import setup_session_routes
-session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
+session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "SESSIONS_FILE": SESSIONS_FILE}
 app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
@@ -589,10 +641,6 @@ app.include_router(setup_embedding_routes())
 # Models
 from routes.model_routes import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
-
-# GitHub Copilot device-flow login
-from routes.copilot_routes import setup_copilot_routes
-app.include_router(setup_copilot_routes())
 
 # TTS
 from routes.tts_routes import setup_tts_routes
@@ -726,11 +774,35 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# Capabilities discovery — lets any UI adapt to what this instance offers.
+from routes.capabilities_routes import setup_capabilities_routes
+app.include_router(setup_capabilities_routes(model_discovery))
+
+# Drop-in plugins: any module under plugins/ that uses the registry decorators
+# (register_route/register_tool/register_action) is loaded here with no central
+# wiring. A feature becomes one new file.
+from src.plugin_registry import load_plugins, registered_routers
+_n_plugins = load_plugins()
+for _plugin_router in registered_routers():
+    app.include_router(_plugin_router)
+
+# Startup summary — one line an operator can grep to see how this instance is
+# configured (version, auth, headless mode, plugins) without digging through
+# settings. Complements /api/v1/capabilities for non-HTTP visibility.
+try:
+    from core.constants import APP_VERSION as _APP_VERSION
+    logging.getLogger(__name__).info(
+        "Odysseus %s ready — auth=%s web_ui=%s plugins=%d",
+        _APP_VERSION, AUTH_ENABLED, SERVE_WEB_UI, _n_plugins,
+    )
+except Exception:
+    pass
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     """Read an HTML file and inject the CSP nonce into inline <script> tags."""
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
@@ -738,6 +810,8 @@ def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
 
 @app.get("/")
 async def serve_index(request: Request):
+    if not SERVE_WEB_UI:
+        raise HTTPException(404, "Web UI disabled (SERVE_WEB_UI=false); API is at /api")
     static_path = abs_join(BASE_DIR, "static/index.html")
     if os.path.exists(static_path):
         return _serve_html_with_nonce(request, static_path)
@@ -785,10 +859,14 @@ async def serve_library(request: Request):
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
+    if not SERVE_WEB_UI:
+        raise HTTPException(404, "Web UI disabled (SERVE_WEB_UI=false)")
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
 
 @app.get("/login")
 async def serve_login(request: Request):
+    if not SERVE_WEB_UI:
+        raise HTTPException(404, "Web UI disabled (SERVE_WEB_UI=false)")
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
@@ -797,7 +875,7 @@ async def get_version():
     return {"version": APP_VERSION}
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, str]:
+async def health_check() -> dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/api/ready")
@@ -812,11 +890,11 @@ async def readiness_check() -> JSONResponse:
     return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
 
 @app.get("/api/runtime")
-async def runtime_info() -> Dict[str, object]:
+async def runtime_info() -> dict[str, object]:
     in_docker = os.path.exists("/.dockerenv")
     if not in_docker:
         try:
-            with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as fh:
+            with open("/proc/1/cgroup", encoding="utf-8", errors="ignore") as fh:
                 cg = fh.read()
             in_docker = any(marker in cg for marker in ("docker", "containerd", "kubepods"))
         except Exception:
@@ -889,7 +967,7 @@ async def _startup_event():
             logger.warning(f"Built-in MCP registration failed (non-critical): {type(e).__name__}: {e}")
         try:
             await asyncio.wait_for(mcp_manager.connect_all_enabled(), timeout=20)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("User MCP startup timed out (non-critical)")
         except BaseException as e:
             logger.warning(f"MCP startup failed (non-critical): {type(e).__name__}: {e}")

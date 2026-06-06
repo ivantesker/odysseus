@@ -8,7 +8,7 @@ enabled tools, timezone, and the three check-in times/prompts/enabled flags.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -21,22 +21,22 @@ from src.task_scheduler import compute_next_run
 
 class CheckInUpdate(BaseModel):
     id: str                               # ScheduledTask.id
-    name: Optional[str] = None
-    scheduled_time: Optional[str] = None  # "HH:MM"
-    prompt: Optional[str] = None
-    enabled: Optional[bool] = None        # maps to status "active"/"paused"
+    name: str | None = None
+    scheduled_time: str | None = None  # "HH:MM"
+    prompt: str | None = None
+    enabled: bool | None = None        # maps to status "active"/"paused"
 
 
 class AssistantSettingsUpdate(BaseModel):
-    name: Optional[str] = None
-    avatar: Optional[str] = None
-    personality: Optional[str] = None
-    model: Optional[str] = None
-    endpoint_url: Optional[str] = None
-    enabled_tools: Optional[list[str]] = None
-    allow_autonomous_email: Optional[bool] = None  # convenience toggle
-    timezone: Optional[str] = None
-    check_ins: Optional[list[CheckInUpdate]] = None
+    name: str | None = None
+    avatar: str | None = None
+    personality: str | None = None
+    model: str | None = None
+    endpoint_url: str | None = None
+    enabled_tools: list[str] | None = None
+    allow_autonomous_email: bool | None = None  # convenience toggle
+    timezone: str | None = None
+    check_ins: list[CheckInUpdate] | None = None
 
 
 _EMAIL_TOOLS = {"send_email", "reply_to_email"}
@@ -196,11 +196,11 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                     existing = [t for t in existing if t not in _EMAIL_TOOLS]
                 crew_db.enabled_tools = json.dumps(existing)
 
-            crew_db.updated_at = datetime.utcnow()
+            crew_db.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
             # Update check-in tasks.
             if payload.check_ins:
-                now_utc = datetime.utcnow()
+                now_utc = datetime.now(UTC).replace(tzinfo=None)
                 tz_name = crew_db.timezone or None
                 for ci in payload.check_ins:
                     task = db.query(ScheduledTask).filter(
@@ -230,12 +230,12 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                             cron_expression=task.cron_expression,
                             tz_name=tz_name,
                         )
-                    task.updated_at = datetime.utcnow()
+                    task.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
             # Timezone change also shifts the NEXT run of all check-ins even if
             # the user didn't touch the time fields.
             if payload.timezone is not None:
-                now_utc = datetime.utcnow()
+                now_utc = datetime.now(UTC).replace(tzinfo=None)
                 tz_name = crew_db.timezone or None
                 tasks = db.query(ScheduledTask).filter(
                     ScheduledTask.owner == owner,

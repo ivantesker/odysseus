@@ -1,8 +1,9 @@
 """Calendar routes — local SQLite-backed calendar CRUD."""
 
 import logging
+import re
 import uuid
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, UTC
 from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
@@ -27,7 +28,7 @@ def _ics_naive_dtstart(dt):
     if isinstance(dt, datetime):
         if dt.tzinfo is not None:
             from datetime import timezone as _tz
-            return dt.astimezone(_tz.utc).replace(tzinfo=None)
+            return dt.astimezone(UTC).replace(tzinfo=None)
         return dt
     if isinstance(dt, date):
         return datetime(dt.year, dt.month, dt.day)
@@ -100,6 +101,15 @@ def _ics_escape(text: str) -> str:
     )
 
 
+def _safe_ics_filename(name: str) -> str:
+    """Return a conservative .ics filename safe for Content-Disposition."""
+    stem = name if isinstance(name, str) else ""
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem).strip("._-")
+    if not stem:
+        stem = "calendar"
+    return f"{stem[:128]}.ics"
+
+
 def _resolve_base_uid(uid: str) -> str:
     """Extract the base series UID from a compound occurrence UID.
 
@@ -121,24 +131,24 @@ def _resolve_base_uid(uid: str) -> str:
 class EventCreate(BaseModel):
     summary: str
     dtstart: str  # ISO 8601
-    dtend: Optional[str] = None
+    dtend: str | None = None
     all_day: bool = False
     description: str = ""
     location: str = ""
-    calendar_href: Optional[str] = None  # calendar id
-    rrule: Optional[str] = None
-    color: Optional[str] = None  # per-event color override
+    calendar_href: str | None = None  # calendar id
+    rrule: str | None = None
+    color: str | None = None  # per-event color override
 
 
 class EventUpdate(BaseModel):
-    summary: Optional[str] = None
-    dtstart: Optional[str] = None
-    dtend: Optional[str] = None
-    all_day: Optional[bool] = None
-    description: Optional[str] = None
-    location: Optional[str] = None
-    rrule: Optional[str] = None
-    color: Optional[str] = None
+    summary: str | None = None
+    dtstart: str | None = None
+    dtend: str | None = None
+    all_day: bool | None = None
+    description: str | None = None
+    location: str | None = None
+    rrule: str | None = None
+    color: str | None = None
 
 
 # ── Helpers ──
@@ -216,7 +226,7 @@ def parse_due_for_user(s: str) -> str:
         return parsed.replace(tzinfo=user_tz).isoformat()
 
     # Natural language — evaluate against user's "now".
-    server_now_utc = datetime.now(_tz.utc)
+    server_now_utc = datetime.now(UTC)
     user_now = now_user_local(server_now_utc)
     # Patch datetime.now() inside _parse_dt by leveraging the user's clock:
     # we re-implement the small natural-language phrases here against user_now
@@ -289,7 +299,7 @@ def _parse_dt_pair(s: str):
         _s2 = s.replace("Z", "+00:00") if s.endswith("Z") else s
         parsed = datetime.fromisoformat(_s2)
         if parsed.tzinfo is not None:
-            return parsed.astimezone(_tz.utc).replace(tzinfo=None), True
+            return parsed.astimezone(UTC).replace(tzinfo=None), True
         return parsed, False
     except ValueError:
         return _parse_dt(s), False
@@ -324,7 +334,7 @@ def _parse_dt(s: str) -> datetime:
         # handling lives in _parse_dt_pair.
         if parsed.tzinfo is not None:
             from datetime import timezone as _tz
-            return parsed.astimezone(_tz.utc).replace(tzinfo=None)
+            return parsed.astimezone(UTC).replace(tzinfo=None)
         return parsed
     except ValueError:
         pass
@@ -399,9 +409,19 @@ def _parse_dt(s: str) -> datetime:
     # Last resort: dateutil's fuzzy parser
     try:
         from dateutil import parser as _du
-        return _du.parse(s)
+        parsed = _du.parse(s)
+        # Strip tz like every other return path above — this function's
+        # contract is naive datetimes (CalendarEvent.dtstart is naive). An
+        # offset-bearing non-ISO input (e.g. RFC-2822 "Mon, 05 Jan 2026
+        # 14:00:00 +0900") otherwise leaked tz-aware into the naive column and
+        # crashed read-back comparisons in _expand_rrule with "can't compare
+        # offset-naive and offset-aware datetimes".
+        if parsed.tzinfo is not None:
+            from datetime import timezone as _tz
+            return parsed.astimezone(UTC).replace(tzinfo=None)
+        return parsed
     except Exception:
-        raise ValueError(f"could not parse datetime: {s!r}")
+        raise ValueError(f"could not parse datetime: {s!r}") from None
 
 
 def _event_to_dict(ev: CalendarEvent) -> dict:
@@ -440,9 +460,12 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
 
 # ── Recurrence expansion ──
 
+_RRULE_EXPANSION_LIMIT = 1000
+
+
 def _expand_rrule(
     ev: CalendarEvent, start: datetime, end: datetime
-) -> List[dict]:
+) -> list[dict]:
     """Expand a single recurring CalendarEvent into occurrence dicts.
 
     Each occurrence gets a stable compound UID of the form
@@ -462,6 +485,7 @@ def _expand_rrule(
         d = _event_to_dict(ev)
         d["is_recurrence"] = False
         d["series_uid"] = ev.uid
+        d["truncated"] = False
         return [d]
 
     # Parse the rrule, applying it to the base dtstart.
@@ -487,6 +511,7 @@ def _expand_rrule(
         d = _event_to_dict(ev)
         d["is_recurrence"] = False
         d["series_uid"] = ev.uid
+        d["truncated"] = False
         # Malformed RRULE rows are fetched by the recurring SQL branch
         # with only dtstart < end_dt — the base event may not actually
         # overlap the window. Only return if it does.
@@ -499,21 +524,25 @@ def _expand_rrule(
     # (matching non-recurring overlap semantics: dtstart < end AND
     # dtend > start).
     expand_start = start - duration
-    occurrences = rule.between(expand_start, end, inc=True)
-    if not occurrences:
-        return []
-
     results = []
+    truncated = False
     base = _event_to_dict(ev)
 
-    for occ_start in occurrences:
+    for occ_start in rule.xafter(expand_start, inc=True):
+        if occ_start >= end:
+            break
+
         occ_end = occ_start + duration
 
         # Overlap filter: occurrence must intersect [start, end).
         # This enforces exclusive-end semantics (occ_start >= end is
         # excluded) and includes multi-day crossings (occ_end > start).
-        if occ_start >= end or occ_end <= start:
+        if occ_end <= start:
             continue
+
+        if len(results) >= _RRULE_EXPANSION_LIMIT:
+            truncated = True
+            break
 
         # Build the compound uid: {base_uid}::{date} or ::{datetime}
         if ev.all_day:
@@ -525,6 +554,7 @@ def _expand_rrule(
         d["uid"] = occ_uid
         d["series_uid"] = ev.uid
         d["is_recurrence"] = True
+        d["truncated"] = False
 
         if ev.all_day:
             d["dtstart"] = occ_start.strftime("%Y-%m-%d")
@@ -536,6 +566,10 @@ def _expand_rrule(
             d["is_utc"] = bool(getattr(ev, "is_utc", False))
 
         results.append(d)
+
+    if truncated:
+        for d in results:
+            d["truncated"] = True
 
     return results
 
@@ -589,7 +623,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             cfg["url"] = validate_caldav_url(body.get("url", ""))
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         cfg["username"] = (body.get("username") or "").strip()
         # Preserve the stored password when the client sends an empty
         # one (edit form re-submitted without re-typing the password).
@@ -695,6 +729,28 @@ def setup_calendar_routes() -> APIRouter:
         from src.caldav_sync import sync_caldav
         return await sync_caldav(owner)
 
+    @router.delete("/calendars/{cal_id}")
+    async def delete_calendar(cal_id: str, request: Request):
+        owner = _require_user(request)
+        db = SessionLocal()
+        try:
+            cal = db.query(CalendarCal).filter(
+                CalendarCal.id == cal_id,
+                CalendarCal.owner == owner,
+            ).first()
+            if not cal:
+                raise HTTPException(404, "Calendar not found")
+            db.delete(cal)
+            db.commit()
+            return {"ok": True}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to delete calendar %s: %s", cal_id, e)
+            raise HTTPException(500, "Failed to delete calendar") from e
+        finally:
+            db.close()
+
     @router.get("/calendars")
     async def list_calendars(request: Request):
         owner = _require_user(request)
@@ -703,14 +759,14 @@ def setup_calendar_routes() -> APIRouter:
             _ensure_default_calendar(db, owner)
             cals = db.query(CalendarCal).filter(CalendarCal.owner == owner).all()
             return {"calendars": [
-                {"name": c.name, "href": c.id, "color": c.color}
+                {"name": c.name, "href": c.id, "color": c.color, "source": c.source}
                 for c in cals
             ]}
         except HTTPException:
             raise
         except Exception as e:
             logger.error("Failed to list calendars: %s", e)
-            raise HTTPException(500, "Failed to list calendars")
+            raise HTTPException(500, "Failed to list calendars") from e
         finally:
             db.close()
 
@@ -766,13 +822,17 @@ def setup_calendar_routes() -> APIRouter:
                 expanded.extend(_expand_rrule(e, start_dt, end_dt))
 
             # Sort by occurrence start time for consistent frontend ordering.
+            truncated = any(e.get("truncated") for e in expanded)
             expanded.sort(key=lambda d: d["dtstart"])
-            return {"events": expanded}
+            response: dict = {"events": expanded}
+            if truncated:
+                response["truncated"] = True
+            return response
         except HTTPException:
             raise
         except Exception as e:
             logger.error("Failed to list events: %s", e)
-            raise HTTPException(500, "Failed to list events")
+            raise HTTPException(500, "Failed to list events") from e
         finally:
             db.close()
 
@@ -840,7 +900,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to create event: %s", e)
-            raise HTTPException(500, "Failed to create event")
+            raise HTTPException(500, "Failed to create event") from e
         finally:
             db.close()
 
@@ -850,7 +910,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             base_uid = _resolve_base_uid(uid)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
@@ -894,7 +954,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to update event: %s", e)
-            raise HTTPException(500, "Failed to update event")
+            raise HTTPException(500, "Failed to update event") from e
         finally:
             db.close()
 
@@ -904,7 +964,7 @@ def setup_calendar_routes() -> APIRouter:
         try:
             base_uid = _resolve_base_uid(uid)
         except ValueError as e:
-            raise HTTPException(400, str(e))
+            raise HTTPException(400, str(e)) from e
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
@@ -923,7 +983,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to delete event: %s", e)
-            raise HTTPException(500, "Failed to delete event")
+            raise HTTPException(500, "Failed to delete event") from e
         finally:
             db.close()
 
@@ -945,7 +1005,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to create calendar: %s", e)
-            raise HTTPException(500, "Failed to create calendar")
+            raise HTTPException(500, "Failed to create calendar") from e
         finally:
             db.close()
 
@@ -966,7 +1026,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to update calendar: %s", e)
-            raise HTTPException(500, "Failed to update calendar")
+            raise HTTPException(500, "Failed to update calendar") from e
         finally:
             db.close()
 
@@ -1004,7 +1064,7 @@ def setup_calendar_routes() -> APIRouter:
             try:
                 cal_data = iCal.from_ical(content)
             except Exception as e:
-                raise HTTPException(400, f"Invalid ICS file: {e}")
+                raise HTTPException(400, f"Invalid ICS file: {e}") from e
 
             # Sanitize display name — length cap + strip control chars
             raw_name = calendar_name.strip() or (file.filename or "").replace(".ics", "").replace("_", " ").strip() or "Imported"
@@ -1081,7 +1141,7 @@ def setup_calendar_routes() -> APIRouter:
                     end_dt = datetime(dtend.dt.year, dtend.dt.month, dtend.dt.day) if dtend else start_dt + timedelta(days=1)
                 else:
                     if hasattr(dt_val, 'tzinfo') and dt_val.tzinfo is not None:
-                        start_dt = dt_val.astimezone(_tz.utc).replace(tzinfo=None)
+                        start_dt = dt_val.astimezone(UTC).replace(tzinfo=None)
                         row_is_utc = True
                     else:
                         start_dt = dt_val
@@ -1089,7 +1149,7 @@ def setup_calendar_routes() -> APIRouter:
                     if dtend:
                         d_end = dtend.dt
                         if hasattr(d_end, 'tzinfo') and d_end.tzinfo is not None:
-                            end_dt = d_end.astimezone(_tz.utc).replace(tzinfo=None)
+                            end_dt = d_end.astimezone(UTC).replace(tzinfo=None)
                         else:
                             end_dt = d_end
                     else:
@@ -1123,7 +1183,7 @@ def setup_calendar_routes() -> APIRouter:
         except Exception as e:
             db.rollback()
             logger.error("Failed to import ICS: %s", e)
-            raise HTTPException(500, "Failed to import ICS")
+            raise HTTPException(500, "Failed to import ICS") from e
         finally:
             db.close()
 
@@ -1168,17 +1228,20 @@ def setup_calendar_routes() -> APIRouter:
             lines.append("END:VCALENDAR")
 
             ics_data = "\r\n".join(lines)
-            safe_name = cal.name.replace(" ", "_").replace("/", "_")
+            download_name = _safe_ics_filename(cal.name)
             return Response(
                 content=ics_data,
                 media_type="text/calendar",
-                headers={"Content-Disposition": f'attachment; filename="{safe_name}.ics"'},
+                headers={
+                    "Content-Disposition": f'attachment; filename="{download_name}"',
+                    "X-Content-Type-Options": "nosniff",
+                },
             )
         except HTTPException:
             raise
         except Exception as e:
             logger.error("Failed to export ICS: %s", e)
-            raise HTTPException(500, "Failed to export ICS")
+            raise HTTPException(500, "Failed to export ICS") from e
         finally:
             db.close()
 

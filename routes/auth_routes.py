@@ -36,7 +36,7 @@ class LoginRequest(BaseModel):
     username: str
     password: str
     remember: bool = True
-    totp_code: Optional[str] = None
+    totp_code: str | None = None
 
 
 class SetupRequest(BaseModel):
@@ -80,7 +80,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     _signup_limiter = RateLimiter(max_requests=3, window_seconds=300)
     _setup_limiter = RateLimiter(max_requests=3, window_seconds=300)
 
-    def _get_current_user(request: Request) -> Optional[str]:
+    def _get_current_user(request: Request) -> str | None:
         token = request.cookies.get(SESSION_COOKIE)
         return auth_manager.get_username_for_token(token)
 
@@ -318,7 +318,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 db.close()
         except Exception as e:
             logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
-            raise HTTPException(500, "Failed to rename user data")
+            raise HTTPException(500, "Failed to rename user data") from e
 
         # Per-user prefs are JSON-backed, not SQL-backed.
         try:
@@ -453,7 +453,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 try:
                     val = int(val)
                 except (TypeError, ValueError):
-                    raise HTTPException(400, f"{key} must be an integer")
+                    raise HTTPException(400, f"{key} must be an integer") from None
                 val = max(lo, min(val, hi))
             current[key] = val
         _save_settings(current)

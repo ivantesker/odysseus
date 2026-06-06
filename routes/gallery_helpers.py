@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 # ---- Request schemas ----
 
 class GalleryPatch(BaseModel):
-    tags: Optional[str] = None
-    favorite: Optional[bool] = None
-    album_id: Optional[str] = None
+    tags: str | None = None
+    favorite: bool | None = None
+    album_id: str | None = None
 
 
 # ---- EXIF extraction ----
@@ -92,7 +92,7 @@ def _extract_exif(content: bytes) -> dict:
 
 # ---- Helpers ----
 
-def _image_to_dict(img: GalleryImage, session_name: str = None) -> Dict[str, Any]:
+def _image_to_dict(img: GalleryImage, session_name: str = None) -> dict[str, Any]:
     return {
         "id": img.id,
         "filename": img.filename,

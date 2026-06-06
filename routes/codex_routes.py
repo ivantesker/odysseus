@@ -246,7 +246,7 @@ def setup_codex_routes(
         try:
             req = SendEmailRequest(**body)
         except Exception as exc:
-            raise HTTPException(400, f"Invalid draft payload: {exc}")
+            raise HTTPException(400, f"Invalid draft payload: {exc}") from exc
         return await email_draft_endpoint(req=req, owner=owner)
 
     @router.post("/emails/send")
@@ -259,7 +259,7 @@ def setup_codex_routes(
         try:
             req = SendEmailRequest(**body)
         except Exception as exc:
-            raise HTTPException(400, f"Invalid send payload: {exc}")
+            raise HTTPException(400, f"Invalid send payload: {exc}") from exc
         return await email_send_endpoint(req=req, background_tasks=BackgroundTasks(), owner=owner)
 
     # ── Memory ────────────────────────────────────────────────────────────
@@ -286,7 +286,7 @@ def setup_codex_routes(
                 session_id=body.get("session_id"),
             )
         except Exception as exc:
-            raise HTTPException(400, f"Invalid memory payload: {exc}")
+            raise HTTPException(400, f"Invalid memory payload: {exc}") from exc
         if not memory_data.text:
             raise HTTPException(400, "Empty memory text")
         return await _as_owner(request, owner, memory_add_endpoint, request, memory_data)
@@ -310,7 +310,7 @@ def setup_codex_routes(
         try:
             data = EventCreate(**body)
         except Exception as exc:
-            raise HTTPException(400, f"Invalid event payload: {exc}")
+            raise HTTPException(400, f"Invalid event payload: {exc}") from exc
         return await _as_owner(request, owner, calendar_create_event, request, data)
 
     # ── Documents ─────────────────────────────────────────────────────────
@@ -377,7 +377,7 @@ def setup_codex_routes(
         try:
             req = DocumentCreate(**body)
         except Exception as exc:
-            raise HTTPException(400, f"Invalid document payload: {exc}")
+            raise HTTPException(400, f"Invalid document payload: {exc}") from exc
         return await _as_owner(request, owner, documents_create_endpoint, request, req)
 
     # ── Cookbook surface ──
@@ -402,7 +402,7 @@ def setup_codex_routes(
             )
             try:
                 stdout_b, stderr_b = await _asyncio.wait_for(proc.communicate(), timeout=timeout)
-            except _asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 return {"exit_code": -1, "stdout": "", "stderr": "timed out"}
             return {
@@ -528,7 +528,7 @@ def setup_codex_routes(
         try:
             req = ServeRequest(**norm)
         except Exception as exc:
-            raise HTTPException(400, f"Invalid serve payload: {exc}")
+            raise HTTPException(400, f"Invalid serve payload: {exc}") from exc
         serve_endpoint = _find_endpoint(None, "POST", "/api/model/serve")
         # Fall back to importing from the cookbook router registered on app.
         if serve_endpoint is None:
@@ -681,7 +681,7 @@ def setup_codex_routes(
         try:
             req = ServeRequest(**body)
         except Exception as exc:
-            raise HTTPException(400, f"Preset payload invalid: {exc}")
+            raise HTTPException(400, f"Preset payload invalid: {exc}") from exc
         serve_endpoint = _find_endpoint(None, "POST", "/api/model/serve")
         if serve_endpoint is None:
             from fastapi import FastAPI
@@ -745,7 +745,7 @@ def setup_codex_routes(
         try:
             atomic_write_json(cookbook_state_path, state)
         except Exception as exc:
-            raise HTTPException(500, f"state write failed: {exc}")
+            raise HTTPException(500, f"state write failed: {exc}") from exc
         return {"ok": True, "session_id": sess, "host": host or "local"}
 
     return router

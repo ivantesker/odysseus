@@ -56,9 +56,10 @@ def set_rag_manager(rag_mgr, personal_docs_mgr=None):
 # ---------------------------------------------------------------------------
 
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url, build_headers, build_models_url
+from datetime import UTC
 
 
-def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Dict]:
+def _resolve_model(spec: str, owner: str | None = None) -> tuple[str, str, dict]:
     """Resolve a model specifier to (endpoint_url, model_id, headers).
 
     Accepts:
@@ -69,7 +70,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
     """
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.llm_core import _detect_provider
     from src.auth_helpers import owner_filter
 
     spec = spec.strip()
@@ -100,16 +101,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
             provider = _detect_provider(base)
             headers = build_headers(ep.api_key, base)
 
-            if provider == "anthropic":
-                # Anthropic: match against hardcoded model list
-                matched = None
-                for am in ANTHROPIC_MODELS:
-                    if model_name.lower() in am.lower() or am.lower() in model_name.lower():
-                        matched = am
-                        break
-                if matched:
-                    return build_chat_url(base), matched, headers
-            else:
+            if True:
                 # OpenAI-compatible and native Ollama: probe the provider's model list.
                 try:
                     r = httpx.get(build_models_url(base), headers=headers, timeout=5)
@@ -144,7 +136,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-async def do_chat_with_model(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_chat_with_model(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Send a message to a specific model and return its response.
 
     Content format:
@@ -193,7 +185,7 @@ _TEACHER_SYSTEM_PROMPT = (
 )
 
 
-async def do_ask_teacher(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_ask_teacher(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Ask a more capable model for help.
 
     Content format:
@@ -238,7 +230,7 @@ async def do_ask_teacher(content: str, session_id: Optional[str] = None, owner: 
         return {"error": f"Teacher call failed ({model_spec}): {e}"}
 
 
-async def do_second_opinion(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_second_opinion(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Get a second opinion from another model, then have the original model
     evaluate the feedback and produce a unified version.
 
@@ -382,7 +374,7 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None, owne
     }
 
 
-async def do_create_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_create_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Create a new chat session.
 
     Content format:
@@ -433,7 +425,7 @@ async def do_create_session(content: str, session_id: Optional[str] = None, owne
         return {"error": f"Failed to create session: {e}"}
 
 
-async def do_list_sessions(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_list_sessions(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """List sessions sorted by most-recently-active first.
 
     Output includes a relative "last active" timestamp per row so the
@@ -481,10 +473,10 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
         def _rel(ts):
             if not ts:
                 return 'never'
-            now = datetime.utcnow()
+            now = datetime.now(UTC).replace(tzinfo=None)
             try:
                 if ts.tzinfo is not None:
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
                 diff = (now - ts).total_seconds()
             except Exception:
                 return 'unknown'
@@ -520,7 +512,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
         return {"error": str(e)}
 
 
-async def do_send_to_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_send_to_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Send a message to an existing session and get a response.
 
     Content format:
@@ -580,14 +572,14 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None, own
         return {"error": f"Failed to send to session: {e}"}
 
 
-async def stream_ai_tool(tool: str, content: str, session_id: Optional[str] = None, owner: Optional[str] = None):
+async def stream_ai_tool(tool: str, content: str, session_id: str | None = None, owner: str | None = None):
     """Dispatcher for streaming AI tools. Yields events as async generator."""
     # Fallback: run non-streaming and yield final result
     desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
     yield {"_final": True, "desc": desc, "result": result}
 
 
-async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_pipeline(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Execute a multi-step pipeline where each model's output feeds the next.
 
     Content format (JSON):
@@ -700,7 +692,7 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
 # Session management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_session(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_manage_session(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Manage sessions: rename, archive, delete, important, truncate, fork.
 
     Content format:
@@ -927,7 +919,7 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
 # Memory management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_memory(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_manage_memory(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Manage memories: list, add, edit, delete, search.
 
     Content format:
@@ -1094,14 +1086,14 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
 # List models tool
 # ---------------------------------------------------------------------------
 
-async def do_list_models(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_list_models(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """List all available models across configured endpoints.
 
     Content = optional filter keyword.
     """
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.llm_core import _detect_provider
     from src.auth_helpers import owner_filter
 
     keyword = content.strip().lower() if content.strip() else None
@@ -1124,9 +1116,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
             headers = build_headers(ep.api_key, base)
 
             model_ids = []
-            if provider == "anthropic":
-                model_ids = list(ANTHROPIC_MODELS)
-            else:
+            if True:
                 try:
                     r = httpx.get(build_models_url(base), headers=headers, timeout=5)
                     r.raise_for_status()
@@ -1166,7 +1156,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
 # RAG management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
+async def do_manage_rag(content: str, session_id: str | None = None) -> dict:
     """Manage RAG indexed documents: list, add_directory, remove_directory.
 
     Content format:
@@ -1257,7 +1247,7 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
 # UI control tool (returns events for frontend to apply)
 # ---------------------------------------------------------------------------
 
-async def do_ui_control(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_ui_control(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Control frontend UI: toggle settings, switch model, change theme.
 
     Content format:
@@ -1548,7 +1538,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 # Image generation
 # ---------------------------------------------------------------------------
 
-async def do_generate_image(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+async def do_generate_image(content: str, session_id: str | None = None, owner: str | None = None) -> dict:
     """Generate an image using an image-capable model (e.g. gpt-image-1).
 
     Content format:
@@ -1764,8 +1754,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 # ---------------------------------------------------------------------------
 
 async def dispatch_ai_tool(
-    tool: str, content: str, session_id: Optional[str] = None, owner: Optional[str] = None
-) -> Tuple[str, Dict]:
+    tool: str, content: str, session_id: str | None = None, owner: str | None = None
+) -> tuple[str, dict]:
     """Dispatch an AI interaction tool. Returns (description, result_dict)."""
 
     if tool == "chat_with_model":

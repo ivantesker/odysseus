@@ -1,0 +1,5 @@
+# Revisions to skip in `git blame` (bulk mechanical reformats, no logic change).
+# Enable locally:  git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# style: modernize type hints (pep585/604) + whitespace via ruff
+d394aa1b95008128c5cd707e7687aadf9775ab95

@@ -12,14 +12,15 @@ import json
 import re
 import time
 import logging
-from typing import AsyncGenerator, List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set
+from collections.abc import AsyncGenerator
 from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
-from src.tool_security import blocked_tools_for_owner
+from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -38,10 +39,10 @@ from src.agent_tools import (
 logger = logging.getLogger(__name__)
 
 
-def _load_mcp_disabled_map() -> Dict[str, set]:
+def _load_mcp_disabled_map() -> dict[str, set]:
     """Load per-server disabled tool sets from the database."""
     from core.database import McpServer, SessionLocal
-    disabled_map: Dict[str, set] = {}
+    disabled_map: dict[str, set] = {}
     db = SessionLocal()
     try:
         for srv in db.query(McpServer).all():
@@ -335,6 +336,8 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
     "search_chats": "- ```search_chats``` — Search across all chat history. Use when user asks 'did we discuss X?' or 'find the conversation about Y'.",
     "pipeline": "- ```pipeline``` — Run a multi-step AI pipeline. Args (JSON) with ordered steps, each specifying a model and prompt. Use for complex workflows.",
     "ui_control": "- ```ui_control``` — Control the UI: toggle tools on/off, OPEN PANELS, open email reply drafts, switch models, change themes. Commands: `toggle <name> on/off` (names: bash/shell, web/search, research, incognito, document_editor/documents), `open_panel <name>` (panels: documents, gallery, email, sessions, notes, memories/brain, skills, settings, cookbook), `open_email_reply <uid> <folder> <reply|reply-all|ai-reply>` (opens an email compose document, does NOT send), `set_mode agent/chat`, `switch_model <name>`, `set_theme <preset>`, `create_theme <name> <bg> <fg> <panel> <border> <accent>` (optional key=val for advanced colors AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false). \"open documents\" / \"open library\" / \"show gallery\" / \"open inbox\" / \"open notes\" / \"open cookbook\" all map to `open_panel <name>`. Theme presets: dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute.",
+    "ask_user": "- ```ask_user``` — Ask the user a multiple-choice question when the task is genuinely ambiguous and the answer changes what you do next (pick an approach, confirm an assumption, choose a target). Args (JSON): {\"question\": \"...\", \"options\": [{\"label\": \"...\", \"description\": \"...\"?}, ...], \"multi\": false?}. 2-6 options. The user gets clickable buttons; calling this ENDS your turn and their choice comes back as your next message. Prefer sensible defaults — only ask when you truly can't proceed well without their input.",
+    "update_plan": "- ```update_plan``` — While executing an approved plan, write the plan back: tick steps done or revise them. Args (JSON): {\"plan\": \"- [x] done step\\n- [ ] next step\"}. Always pass the COMPLETE checklist, not a diff. Call it after finishing each step (mark it `- [x]`) and whenever the user asks to change the plan. The user's docked plan window updates live. Does nothing if there's no active plan.",
     "list_served_models": "- ```list_served_models``` — Show what the Cookbook (LLM-serving subsystem) is currently running. NO args. Use this for ANY 'what's running' / 'what's serving' / 'show my cookbook' / 'is anything up' query. DO NOT shell out (`ps aux`, `docker ps`, etc.) — this tool is the source of truth. Failed serve tasks include recent logs plus diagnosis/retry suggestions; use those suggestions to call `serve_model` again with an adjusted command when appropriate.",
     "stop_served_model": "- ```stop_served_model``` — Stop a running model server. Args (JSON): {\"session_id\": \"<from list_served_models>\"}. Use for 'kill my cookbook' / 'stop the model' / 'shut down vLLM'.",
     "tail_serve_output": "- ```tail_serve_output``` — Read the actual tmux stderr/traceback of a CURRENTLY failing cookbook task. Args (JSON): {\"session_id\": \"<from list_served_models>\", \"tail\": 150?}. **Use ONLY after** you just launched something via `serve_model` AND `list_served_models` reports YOUR new task as `crashed`/`error`. DO NOT use it on old stopped/completed download tasks (they're historical noise — won't predict whether a new launch succeeds). DO NOT call it before launching a fresh attempt. When you do call it, bump `tail` to 400+ only if the visible error references 'see root cause above'.",
@@ -462,15 +465,8 @@ _cached_base_prompt_key = None
 # especially — often fail to follow the fenced-block convention and emit raw
 # JSON, which the agent then can't parse as a tool call.
 _API_HOSTS = frozenset([
-    "api.openai.com", "api.anthropic.com",
-    "openrouter.ai", "api.groq.com",
-    "api.mistral.ai", "api.cohere.com",
-    "api.deepseek.com", "deepseek.com",
-    "api.together.xyz", "api.fireworks.ai",
-    "api.perplexity.ai", "api.x.ai",
-    "ollama.com", "api.venice.ai",
-    "api.githubcopilot.com",
-    # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
+    "ollama.com",
+    # Local OpenAI-compatible endpoints (llama.cpp, vLLM, Ollama /v1, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
     # model name, so well-behaved local servers don't get native tool
     # schemas and the agent silently degrades to fenced-block parsing.
@@ -502,10 +498,10 @@ def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
     return parsed.port == 11434 and (path == "/v1" or path.startswith("/v1/"))
 
 
-def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
+def _endpoint_lookup_keys(endpoint_url: str) -> list[str]:
     """Candidate ModelEndpoint.base_url keys for a runtime chat URL."""
     raw = (endpoint_url or "").strip()
-    keys: List[str] = []
+    keys: list[str] = []
 
     def add(value: str):
         value = (value or "").strip()
@@ -541,7 +537,7 @@ _ADMIN_KEYWORDS = [
     "note", "notes", "todo", "todos", "reminder", "reminders",
 ]
 
-def _detect_admin_intent(messages: List[Dict]) -> bool:
+def _detect_admin_intent(messages: list[dict]) -> bool:
     """Check if the last user message suggests admin/management tool usage."""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -553,7 +549,7 @@ def _detect_admin_intent(messages: List[Dict]) -> bool:
     return False
 
 
-def _extract_last_user_message(messages: List[Dict]) -> str:
+def _extract_last_user_message(messages: list[dict]) -> str:
     """Return the most recent user message as plain text."""
     for msg in reversed(messages):
         if msg.get("role") == "user":
@@ -564,7 +560,7 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
     return ""
 
 
-def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
+def _recent_context_for_retrieval(messages: list[dict], max_user: int = 3, max_chars: int = 600) -> str:
     """Build the tool-retrieval query from the last few USER turns, not just
     the latest one.
 
@@ -591,17 +587,17 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
     return "\n".join(collected)[:max_chars]
 
 def _build_system_prompt(
-    messages: List[Dict],
+    messages: list[dict],
     model: str,
     active_document,
     mcp_mgr,
-    disabled_tools: Optional[Set[str]] = None,
+    disabled_tools: set[str] | None = None,
     needs_admin: bool = False,
-    relevant_tools: Optional[Set[str]] = None,
-    mcp_disabled_map: Optional[Dict[str, set]] = None,
+    relevant_tools: set[str] | None = None,
+    mcp_disabled_map: dict[str, set] | None = None,
     compact: bool = False,
-    owner: Optional[str] = None,
-) -> List[Dict]:
+    owner: str | None = None,
+) -> list[dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
 
@@ -1122,7 +1118,7 @@ def _resolve_tool_blocks(round_response: str, native_tool_calls: list, round_num
 
 
 def _append_tool_results(
-    messages: List[Dict],
+    messages: list[dict],
     round_response: str,
     native_tool_calls: list,
     tool_results: list,
@@ -1198,7 +1194,7 @@ def _append_tool_results(
 
 
 def _compute_final_metrics(
-    messages: List[Dict],
+    messages: list[dict],
     full_response: str,
     total_duration: float,
     time_to_first_token,
@@ -1210,7 +1206,7 @@ def _compute_final_metrics(
     round_texts: list,
     model: str = "",
     last_round_input_tokens: int = 0,
-    prep_timings: Optional[Dict[str, float]] = None,
+    prep_timings: dict[str, float] | None = None,
     backend_gen_tps: float = 0,
     backend_prefill_tps: float = 0,
 ) -> dict:
@@ -1371,24 +1367,73 @@ def _empty_response_fallback(
     return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
 
 
+PLAN_MODE_DIRECTIVE = (
+    "## PLAN MODE — OVERRIDES EVERYTHING ELSE BELOW\n"
+    "You are in PLAN MODE. Your ONLY job this turn is to PROPOSE a plan. You have "
+    "NOT done anything yet. Do NOT claim you created, wrote, ran, sent, or changed "
+    "anything — that would be a lie.\n"
+    "\n"
+    "ABSOLUTE RULE — DO NOT MUTATE ANYTHING. Every write/state-changing tool, "
+    "including the shell (`bash`/`python`), is disabled this turn and will be "
+    "rejected — only read-only tools remain available. Use the read-only tools "
+    "listed below (read files, search code, browse the project, web lookups) to "
+    "ground the plan. If the task is 'write a file', your plan is to DESCRIBE "
+    "writing it — you do NOT write it now.\n"
+    "\n"
+    "OUTPUT: present the plan as a GitHub-style checklist, one concrete step per line:\n"
+    "- [ ] first action you will take once approved\n"
+    "- [ ] next action\n"
+    "Each item = one concrete action (file to create/edit, command to run, side "
+    "effect). Do not execute. Do not end with 'Done' or anything implying the work "
+    "is finished. End your turn with the checklist."
+)
+
+
+def build_active_plan_note(approved_plan: str) -> str:
+    """System note that pins an approved plan during execution.
+
+    Sent back by the frontend each turn so a long plan on a weak model survives
+    history truncation — the agent can always re-read it. Returns "" for empty
+    input.
+    """
+    if not approved_plan or not approved_plan.strip():
+        return ""
+    return (
+        "## ACTIVE PLAN (approved — execute this)\n"
+        "You are executing a plan the user already approved. THE FULL PLAN IS "
+        "BELOW — it is always provided here every turn. Do NOT say you lost it, "
+        "and do NOT look for it in tasks, notes, memory, files, or the API; just "
+        "read it below. Work through it IN ORDER. After finishing each step, call "
+        "the `update_plan` tool with the full checklist and that step marked "
+        "`- [x]` so progress stays visible in the user's plan window. If the user "
+        "asks to change the plan, call `update_plan` with the revised checklist. "
+        "Do the next unchecked item until all are done. Do not skip, reorder, or "
+        "invent steps; if a step is genuinely impossible, say so and stop.\n\n"
+        "Current plan:\n"
+        + approved_plan.strip()
+    )
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
-    messages: List[Dict],
-    headers: Optional[Dict] = None,
+    messages: list[dict],
+    headers: dict | None = None,
     temperature: float = 0.3,
     max_tokens: int = 4096,
-    prompt_type: Optional[str] = None,
+    prompt_type: str | None = None,
     max_rounds: int = MAX_AGENT_ROUNDS,
     max_tool_calls: int = 0,
     context_length: int = 0,
     active_document=None,
-    session_id: Optional[str] = None,
-    disabled_tools: Optional[Set[str]] = None,
-    owner: Optional[str] = None,
-    relevant_tools: Optional[Set[str]] = None,
-    fallbacks: Optional[List[tuple]] = None,
-    workspace: Optional[str] = None,
+    session_id: str | None = None,
+    disabled_tools: set[str] | None = None,
+    owner: str | None = None,
+    relevant_tools: set[str] | None = None,
+    fallbacks: list[tuple] | None = None,
+    workspace: str | None = None,
+    plan_mode: bool = False,
+    approved_plan: str | None = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1403,7 +1448,7 @@ async def stream_agent_loop(
     """
 
     mcp_mgr = get_mcp_manager()
-    prep_timings: Dict[str, float] = {}
+    prep_timings: dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
     public_blocked_tools = blocked_tools_for_owner(owner)
     if public_blocked_tools:
@@ -1412,6 +1457,13 @@ async def stream_agent_loop(
         # public/non-admin users rather than trying to enumerate every tool.
         mcp_mgr = None
 
+    if plan_mode:
+        # Plan mode: investigate read-only, propose a plan, don't execute. The
+        # route also unions the read-only-disabled set, but enforce here too so
+        # the loop is safe regardless of caller. MCP stays available but is
+        # filtered to read-only tools below (after the disabled map is loaded).
+        disabled_tools.update(plan_mode_disabled_tools())
+
     _t0 = time.time()
     _needs_admin = _detect_admin_intent(messages)
     _last_user = _extract_last_user_message(messages)
@@ -1419,6 +1471,13 @@ async def stream_agent_loop(
     # not just the latest message, so short follow-ups don't drop just-used tools.
     _retrieval_query = _recent_context_for_retrieval(messages) or _last_user
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
+    if plan_mode and mcp_mgr:
+        # Allow read-only MCP tools to investigate, block write/unknown ones:
+        # hide them from the schemas AND reject them at runtime by qualified name.
+        _mcp_block_map, _mcp_block_q = mcp_mgr.plan_mode_blocked_mcp()
+        for _sid, _names in _mcp_block_map.items():
+            _mcp_disabled_map.setdefault(_sid, set()).update(_names)
+        disabled_tools.update(_mcp_block_q)
     prep_timings["request_setup"] = time.time() - _t0
 
     # RAG-based tool selection: retrieve relevant tools for this query.
@@ -1438,7 +1497,7 @@ async def stream_agent_loop(
                             asyncio.to_thread(tool_idx.index_mcp_tools, mcp_mgr, _mcp_disabled_map),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "[tool-rag] MCP tool indexing exceeded %.1fs; continuing without reindex",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
@@ -1450,7 +1509,7 @@ async def stream_agent_loop(
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                         logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "[tool-rag] Retrieval exceeded %.1fs; falling back to always-available tools",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
@@ -1491,7 +1550,7 @@ async def stream_agent_loop(
     # serve command — `--enable-auto-tool-choice` flips it on. UI can
     # also toggle per endpoint). NULL = unknown; for local Ollama /v1 we
     # default to fenced tools, otherwise fall through to keyword + host checks.
-    _endpoint_supports: Optional[bool] = None
+    _endpoint_supports: bool | None = None
     try:
         from core.database import SessionLocal as _SL, ModelEndpoint as _ME
         _db = _SL()
@@ -1576,6 +1635,27 @@ async def stream_agent_loop(
         else:
             messages.insert(0, {"role": "system", "content": _ws_note})
         logger.info("[workspace] active for this turn: %s", workspace)
+    if plan_mode:
+        # Steer the model to investigate-then-propose. Hard tool gating handles
+        # every write path except shell; this directive is what keeps the
+        # intentionally-allowed bash/python read-only, so it must DOMINATE. Put
+        # it at the very TOP of the system prompt (the base prompt is large and
+        # action-oriented — appending buried it, and small models ignored it).
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = PLAN_MODE_DIRECTIVE + "\n\n" + (messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": PLAN_MODE_DIRECTIVE})
+    elif approved_plan and approved_plan.strip():
+        # EXECUTING an approved plan. Pin the checklist as a top-of-context
+        # system note so a long plan on a weak model survives history
+        # truncation — the agent can always re-read the plan instead of losing
+        # the thread. (The first system message is kept by the context trimmer.)
+        _plan_note = build_active_plan_note(approved_plan)
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = _plan_note + "\n\n" + (messages[0].get("content") or "")
+        else:
+            messages.insert(0, {"role": "system", "content": _plan_note})
+        logger.info("[plan] pinned approved plan (%d chars) for execution turn", len(approved_plan))
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()
@@ -1682,6 +1762,7 @@ async def stream_agent_loop(
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
+    _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
 
     # Document streaming state (persists across rounds)
     _doc_acc = ""          # accumulated tool-call JSON arguments
@@ -2263,6 +2344,36 @@ async def stream_agent_loop(
                     f'data: {json.dumps({"type": "ui_control", "data": result})}\n\n'
                 )
 
+            # ask_user: the agent posed a multiple-choice question. Emit it so the
+            # frontend renders clickable options, then end the turn (below) and
+            # wait — the user's pick becomes the next message.
+            if "ask_user" in result:
+                # The question lives in the tool args. ChatMessage.to_dict()
+                # replays only role+content to the model next turn — tool_event
+                # metadata is dropped — so if the question is never in the saved
+                # assistant text, the model can't see it already asked and will
+                # loop and re-ask after the user answers. Stream it as assistant
+                # text (once) so it persists and is replayed. The card shows the
+                # options only, so this is the single visible copy of the question.
+                _auq = result["ask_user"]
+                _auq_q = (_auq.get("question") or "").strip()
+                if _auq_q and _auq_q not in full_response:
+                    _auq_delta = ("\n\n" if full_response.strip() else "") + _auq_q
+                    full_response += _auq_delta
+                    yield 'data: ' + json.dumps({"delta": _auq_delta}) + '\n\n'
+                yield (
+                    f'data: {json.dumps({"type": "ask_user", "data": result["ask_user"]})}\n\n'
+                )
+                _awaiting_user = True
+
+            # update_plan: agent wrote back to the plan (ticked a step / revised).
+            # Push it to the frontend so the stored plan + docked window update
+            # live. Does NOT end the turn — the agent keeps working.
+            if "plan_update" in result:
+                yield (
+                    f'data: {json.dumps({"type": "plan_update", "data": result["plan_update"]})}\n\n'
+                )
+
             # Build output for frontend tool bubble.
             # Document tools get a short summary — content goes to the editor panel.
             output_text = ""
@@ -2390,6 +2501,13 @@ async def stream_agent_loop(
 
         # If budget was hit, stop the loop
         if budget_hit:
+            break
+
+        # ask_user posed a question — stop here and wait for the user's choice.
+        # Don't feed tool results back or advance a round; the user's selection
+        # arrives as the next message and the agent resumes from there. The
+        # question text is already in the streamed response, so it persists.
+        if _awaiting_user:
             break
 
         # Feed results back to LLM for next round

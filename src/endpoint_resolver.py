@@ -27,7 +27,7 @@ _NON_CHAT_MODEL = (
 )
 
 
-def _first_chat_model(models) -> Optional[str]:
+def _first_chat_model(models) -> str | None:
     """First model that isn't an embedding/tts/etc.; falls back to models[0]."""
     for m in (models or []):
         if not any(p in str(m).lower() for p in _NON_CHAT_MODEL):
@@ -71,10 +71,10 @@ def _endpoint_enabled_models(ep) -> list:
 
 
 # Cache for Tailscale hostname → IP resolution
-_tailscale_cache: Dict[str, Optional[str]] = {}
+_tailscale_cache: dict[str, str | None] = {}
 
 
-def _resolve_tailscale_host(hostname: str) -> Optional[str]:
+def _resolve_tailscale_host(hostname: str) -> str | None:
     """Try to resolve a hostname via 'tailscale status' if DNS fails."""
     if hostname in _tailscale_cache:
         return _tailscale_cache[hostname]
@@ -142,14 +142,6 @@ def normalize_base(url: str) -> str:
     return url
 
 
-def _anthropic_api_root(base: str) -> str:
-    """Return Anthropic's API root, preserving /v1 for OpenAI-compatible APIs elsewhere."""
-    base = (base or "").strip().rstrip("/")
-    if _host_match(base, "anthropic.com") and base.endswith("/v1"):
-        return base[:-3].rstrip("/")
-    return base
-
-
 def _ollama_api_root(base: str) -> str:
     """Return the native Ollama API root, adding /api for ollama.com hosts."""
     base = (base or "").strip().rstrip("/")
@@ -167,8 +159,6 @@ def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
-    if provider == "anthropic":
-        return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
         return _ollama_api_root(base) + "/chat"
     return base + "/chat/completions"
@@ -178,40 +168,26 @@ def build_models_url(base: str) -> str:
     """Return the provider-specific model-list endpoint URL for a base."""
     base = resolve_url(base)
     provider = _detect_provider(base)
-    if provider == "anthropic":
-        return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama":
         return _ollama_api_root(base) + "/tags"
     return base + "/models"
 
 
-def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
+def build_headers(api_key: str | None, base: str) -> dict[str, str]:
     """Build auth headers for an endpoint."""
-    provider = _detect_provider(base)
-    headers: Dict[str, str] = {}
-    if provider == "anthropic":
-        if api_key:
-            headers["x-api-key"] = api_key
-        headers["anthropic-version"] = "2023-06-01"
-        return headers
-    if provider == "copilot":
-        from src.copilot import copilot_headers
-        return copilot_headers(api_key)
+    headers: dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    if provider == "openrouter":
-        headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
-        headers.setdefault("X-OpenRouter-Title", "Odysseus")
     return headers
 
 
 def resolve_endpoint(
     setting_prefix: str,
-    fallback_url: Optional[str] = None,
-    fallback_model: Optional[str] = None,
-    fallback_headers: Optional[Dict] = None,
-    owner: Optional[str] = None,
-) -> Tuple[Optional[str], Optional[str], Optional[Dict]]:
+    fallback_url: str | None = None,
+    fallback_model: str | None = None,
+    fallback_headers: dict | None = None,
+    owner: str | None = None,
+) -> tuple[str | None, str | None, dict | None]:
     """Resolve an endpoint/model from settings, with fallback.
 
     Args:
@@ -300,8 +276,8 @@ def resolve_endpoint(
 
 
 def resolve_endpoint_by_id(
-    ep_id: str, model: Optional[str] = None, owner: Optional[str] = None
-) -> Optional[Tuple[str, str, Dict]]:
+    ep_id: str, model: str | None = None, owner: str | None = None
+) -> tuple[str, str, dict] | None:
     """Resolve a specific endpoint id (+ optional model) to (chat_url, model, headers).
 
     Returns None if the endpoint doesn't exist or is disabled. Used to turn
@@ -341,7 +317,7 @@ def resolve_endpoint_by_id(
         db.close()
 
 
-def resolve_chat_fallback_candidates(owner: Optional[str] = None) -> list:
+def resolve_chat_fallback_candidates(owner: str | None = None) -> list:
     """Build the configured default-chat fallback chain as a list of
     (chat_url, model, headers) tuples, skipping any that can't resolve.
 
@@ -351,7 +327,7 @@ def resolve_chat_fallback_candidates(owner: Optional[str] = None) -> list:
     return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
 
 
-def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
+def resolve_utility_fallback_candidates(owner: str | None = None) -> list:
     """Configured fallback chain for the Utility model (`utility_model_fallbacks`)."""
     try:
         from src.settings import get_user_setting, load_settings
@@ -364,12 +340,12 @@ def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
     return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
 
 
-def resolve_vision_fallback_candidates(owner: Optional[str] = None) -> list:
+def resolve_vision_fallback_candidates(owner: str | None = None) -> list:
     """Configured fallback chain for the Vision model (`vision_model_fallbacks`)."""
     return _resolve_fallback_candidates("vision_model_fallbacks", owner=owner)
 
 
-def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) -> list:
+def _resolve_fallback_candidates(setting_key: str, owner: str | None = None) -> list:
     out = []
     try:
         from src.settings import get_user_setting, load_settings

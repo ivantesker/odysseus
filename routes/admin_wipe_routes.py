@@ -169,7 +169,7 @@ def setup_admin_wipe_routes(session_manager):
         except Exception as e:
             db.rollback()
             logger.exception(f"Wipe {kind} failed")
-            raise HTTPException(500, f"Wipe {kind} failed: {e}")
+            raise HTTPException(500, f"Wipe {kind} failed: {e}") from e
         finally:
             db.close()
 

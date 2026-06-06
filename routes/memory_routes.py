@@ -39,7 +39,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     """Set up memory-related routes."""
     router = APIRouter(prefix="/api/memory", tags=["memory"])
 
-    def _owner(request: Request) -> Optional[str]:
+    def _owner(request: Request) -> str | None:
         return get_current_user(request)
 
     def _assert_session_owner(session_obj, user):
@@ -54,7 +54,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if user is not None and getattr(session_obj, "owner", None) != user:
             raise HTTPException(404, "Session not found")
 
-    def _verify_memory_owner(memory: dict, user: Optional[str]):
+    def _verify_memory_owner(memory: dict, user: str | None):
         """Raise 404 if user doesn't own this memory.
 
         SECURITY: strict ownership — previously `mem_owner and mem_owner != user`
@@ -81,10 +81,10 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                                  for m in relevant]
         }
 
-    @router.post("/add", response_model=Dict[str, Any])
+    @router.post("/add", response_model=dict[str, Any])
     async def api_add_memory(
         request: Request,
-        memory_data: Optional[MemoryAddRequest] = None
+        memory_data: MemoryAddRequest | None = None
     ):
         """Add a new memory entry with optional category, source, and session reference."""
         from src.auth_helpers import require_privilege
@@ -180,7 +180,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         try:
             _session_obj = session_manager.get_session(session_id)
         except KeyError:
-            raise HTTPException(404, f"Session {session_id} not found")
+            raise HTTPException(404, f"Session {session_id} not found") from None
         _assert_session_owner(_session_obj, user)
         memories = memory_manager.load(owner=user)
         session_memories = [m for m in memories if m.get("session_id") == session_id]
@@ -204,13 +204,13 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         }
 
     @router.post("/extract")
-    async def extract_memory(request: Request, session: str = Form(...)) -> Dict[str, List[str]]:
+    async def extract_memory(request: Request, session: str = Form(...)) -> dict[str, list[str]]:
         """Analyze a session's chat history and return memory suggestions."""
         require_user(request)
         try:
             sess = session_manager.get_session(session)
         except KeyError:
-            raise HTTPException(404, "Session not found")
+            raise HTTPException(404, "Session not found") from None
         _assert_session_owner(sess, _owner(request))
 
         system_msg = {
@@ -349,10 +349,10 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 model = sess.model
                 headers = sess.headers
             except KeyError:
-                 raise HTTPException(404, "Session not found — needed for LLM config")
+                 raise HTTPException(404, "Session not found — needed for LLM config") from None
         else:
             endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
-    
+
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
 
@@ -477,7 +477,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             return {"suggestions": [{"text": l, "category": "fact"} for l in lines[:20]], "filename": filename}
         except Exception as e:
             logger.error(f"Memory import extraction failed: {e}")
-            raise HTTPException(502, f"LLM extraction failed: {str(e)}")
+            raise HTTPException(502, f"LLM extraction failed: {str(e)}") from e
 
     @router.post("/{memory_id}/pin")
     def pin_memory(request: Request, memory_id: str, pinned: bool = Form(True)):

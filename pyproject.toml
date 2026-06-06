@@ -1,3 +1,43 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# A per-test timeout so one test making a real network call (or otherwise
+# blocking) can't hang the whole suite — it fails that test and moves on.
+# thread method works for sync and threaded blocking on all platforms.
+addopts = "--timeout=60 --timeout-method=thread"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+extend-exclude = [
+    "venv",
+    ".venv",
+    "build",
+    "dist",
+    "static",
+    "node_modules",
+    "experiments",
+]
+
+[tool.ruff.lint]
+# Start lenient on a large legacy codebase, then ratchet up the select list.
+# E/W pycodestyle, F pyflakes, I import-sorting, UP pyupgrade, B bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+# E501 (line length) is enforced by the formatter; B008 fights FastAPI's
+# Depends() default-arg pattern used across every route.
+ignore = ["E501", "B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+# Lenient on purpose: the codebase is large and mostly untyped. Start permissive,
+# tighten per-module over time (ratchet). CI runs mypy non-blocking for now.
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_unused_ignores = false
+warn_redundant_casts = true
+warn_unused_configs = true
+no_implicit_optional = true
+exclude = '(^|/)(venv|\.venv|build|dist|static|node_modules|tests|experiments)/'
