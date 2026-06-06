@@ -70,6 +70,34 @@ const _TABS = {
     <p class="cv-hint">Aggregate scattered eval CSVs (results.csv across dated folders) into one comparison ↗ — no deps.</p>
     ${_field('eval results root', 'cv-ag-root', '', 'D:/rider_dome/eval_results')}
     <button class="cv-run" data-action="aggregate">Aggregate eval CSVs ↗</button>`,
+  import: () => `
+    <p class="cv-hint">Convert COCO / Pascal-VOC / Label-Studio annotations to YOLO.</p>
+    <div class="cv-row">
+      <select id="cv-im-fmt">
+        <option value="coco">COCO (instances.json)</option>
+        <option value="labelstudio">Label Studio (export.json)</option>
+        <option value="voc">Pascal VOC (xml dir)</option>
+      </select>
+    </div>
+    ${_field('source (json file or xml dir)', 'cv-im-src', '', 'D:/export/instances.json')}
+    ${_field('out labels dir', 'cv-im-out', '', 'D:/rider_dome/converted/labels')}
+    <button class="cv-run" data-action="convert_data">Convert → YOLO</button>
+    <hr style="border:none;border-top:1px solid var(--border,#355a66);margin:16px 0">
+    <p class="cv-hint">Leak-free stratified split — keeps each source/video's frames together (regex captures the source key from the filename).</p>
+    ${_field('labels dir', 'cv-sp-labels', '', 'D:/rider_dome/yolo_dataset/labels')}
+    <div class="cv-row">${_field('source regex (group 1 = source)', 'cv-sp-rx', '', '(.+)_frame')}${_field('val_frac', 'cv-sp-val', '0.2', '0.2')}</div>
+    <button class="cv-run" data-action="stratified">Stratified split (report balance)</button>`,
+  deploy: () => `
+    <p class="cv-hint">Generate DeepStream + Triton configs from an ONNX model (I/O shapes auto-read).</p>
+    ${_field('onnx model', 'cv-dp-onnx', '', 'D:/rider_dome/batch_yolox/exports/model.onnx')}
+    <div class="cv-row">${_field('class_names', 'cv-dp-names', '', 'car,bus,truck')}
+      <label class="cv-field"><span>precision</span><select id="cv-dp-mode"><option value="2">FP16</option><option value="1">INT8</option><option value="0">FP32</option></select></label></div>
+    <button class="cv-run" data-action="deploy">Generate configs ↗</button>
+    <hr style="border:none;border-top:1px solid var(--border,#355a66);margin:16px 0">
+    <p class="cv-hint">INT8 calibration set — pick a diverse subset (aHash farthest-point) so quantization doesn't tank on near-identical frames.</p>
+    ${_field('images dir', 'cv-cal-img', '', 'D:/rider_dome/yolo_dataset/images')}
+    <div class="cv-row">${_field('n images', 'cv-cal-n', '200', '200')}${_field('out file (optional)', 'cv-cal-out', '', 'D:/calib_list.txt')}</div>
+    <button class="cv-run" data-action="calibration">Select calibration set</button>`,
   convert: () => `
     ${_field('source (.pt)', 'cv-cv-src', '', 'D:/rider_dome/yolov10_training/.../best.pt')}
     <div class="cv-row">
@@ -125,9 +153,11 @@ function _getModal() {
       </div>
       <div class="cv-tabs">
         <button class="cv-tab active" data-tab="dataset">Dataset</button>
+        <button class="cv-tab" data-tab="import">Import</button>
         <button class="cv-tab" data-tab="review">Review / QA</button>
         <button class="cv-tab" data-tab="eval">Eval / bench</button>
         <button class="cv-tab" data-tab="convert">Convert</button>
+        <button class="cv-tab" data-tab="deploy">Deploy</button>
       </div>
       <div class="modal-body" id="cv-body" style="flex:1;overflow:auto;padding:14px 16px;">
         <div id="cv-form"></div>
@@ -230,6 +260,27 @@ async function _run(action) {
       });
     } else if (action === 'aggregate') {
       data = await _post('/api/cv/eval-aggregate', { root: _val('cv-ag-root') });
+    } else if (action === 'convert_data') {
+      data = await _post('/api/cv/convert-data', {
+        src: _val('cv-im-src'), format: _val('cv-im-fmt'), out_dir: _val('cv-im-out'),
+      });
+    } else if (action === 'stratified') {
+      data = await _post('/api/cv/split-stratified', {
+        labels_dir: _val('cv-sp-labels'), source_regex: _val('cv-sp-rx'),
+        val_frac: parseFloat(_val('cv-sp-val') || '0.2'),
+      });
+    } else if (action === 'deploy') {
+      const names = _val('cv-dp-names');
+      data = await _post('/api/cv/deploy', {
+        onnx: _val('cv-dp-onnx'),
+        class_names: names ? names.split(',').map(s => s.trim()).filter(Boolean) : null,
+        network_mode: parseInt(_val('cv-dp-mode') || '2', 10),
+      });
+    } else if (action === 'calibration') {
+      data = await _post('/api/cv/calibration', {
+        images_dir: _val('cv-cal-img'), n: parseInt(_val('cv-cal-n') || '200', 10),
+        out_file: _val('cv-cal-out'),
+      });
     } else if (action === 'eval') {
       data = await _post('/api/cv/eval', {
         model: _val('cv-ev-model'), data: _val('cv-ev-data'),

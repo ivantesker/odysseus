@@ -150,6 +150,64 @@ def test_eval_aggregate_requires_root(client):
     assert client.post("/api/cv/eval-aggregate", json={}).status_code == 400
 
 
+def test_convert_data_route(client, tmp_path):
+    import json as _json
+    coco = {"categories": [{"id": 1, "name": "car"}],
+            "images": [{"id": 1, "file_name": "a.jpg", "width": 100, "height": 100}],
+            "annotations": [{"image_id": 1, "category_id": 1, "bbox": [10, 10, 20, 20]}]}
+    (tmp_path / "c.json").write_text(_json.dumps(coco))
+    r = client.post("/api/cv/convert-data", json={
+        "src": str(tmp_path / "c.json"), "format": "coco", "out_dir": str(tmp_path / "out")})
+    assert r.status_code == 200
+    assert r.json()["class_names"] == ["car"]
+
+
+def test_class_map_route(client):
+    r = client.post("/api/cv/class-map", json={"sources": [
+        {"name": "A", "class_names": ["car"]}, {"name": "B", "class_names": ["car", "bus"]}]})
+    assert r.status_code == 200
+    assert r.json()["unified_names"] == ["car", "bus"]
+
+
+def test_split_stratified_route(client, tmp_path):
+    lbl = tmp_path / "labels"; lbl.mkdir()
+    for i in range(10):
+        (lbl / f"v{i % 2}_f{i}.txt").write_text("0 .5 .5 .2 .2\n")
+    r = client.post("/api/cv/split-stratified", json={
+        "labels_dir": str(lbl), "source_regex": r"(v\d)", "val_frac": 0.5})
+    assert r.status_code == 200
+    assert r.json()["n_train"] + r.json()["n_val"] == 10
+
+
+def test_deploy_route(client, monkeypatch):
+    from src.services.cv import deploy
+    monkeypatch.setattr(deploy, "read_onnx_io", lambda p: {
+        "inputs": [{"name": "images", "shape": [1, 3, 256, 256], "dtype": "tensor(float)"}],
+        "outputs": [{"name": "out", "shape": [1, 84, 100], "dtype": "tensor(float)"}], "size_mb": 5})
+    r = client.post("/api/cv/deploy", json={"onnx": "m.onnx", "class_names": ["car"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["input_hw"] == [256, 256] and body["outputs"] == ["out"]
+    page = client.get(body["report_url"])
+    assert "DeepStream" in page.text and "Triton" in page.text
+
+
+def test_deploy_route_requires_onnx(client):
+    assert client.post("/api/cv/deploy", json={}).status_code == 400
+
+
+def test_calibration_route(client, tmp_path):
+    pytest.importorskip("PIL")
+    from PIL import Image
+    import numpy as np
+    rng = np.random.RandomState(0)
+    for i in range(12):
+        Image.fromarray(rng.randint(0, 255, (24, 24, 3), dtype=np.uint8)).save(tmp_path / f"{i}.png")
+    r = client.post("/api/cv/calibration", json={"images_dir": str(tmp_path), "n": 5})
+    assert r.status_code == 200
+    assert r.json()["count"] == 5
+
+
 def test_inspect_route(client, tmp_path):
     (tmp_path / "images").mkdir(); (tmp_path / "labels").mkdir()
     (tmp_path / "data.yaml").write_text("nc: 2\nnames: ['a', 'b']\n")

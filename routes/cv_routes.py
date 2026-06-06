@@ -167,6 +167,82 @@ def setup_cv_routes() -> APIRouter:
         return {"report_id": report_id, "report_url": f"/api/cv/report/{report_id}",
                 "runs": len(agg.get("runs", [])), "primary": agg.get("primary")}
 
+    @router.post("/api/cv/deploy")
+    def cv_deploy(request: Request, body: dict = Body(...)):
+        """Generate edge deploy configs (DeepStream + Triton) from an ONNX model."""
+        require_admin(request)
+        from src.services.cv import deploy as dp
+        onnx = (body.get("onnx") or "").strip()
+        if not onnx:
+            raise HTTPException(400, "onnx path is required")
+        names = body.get("class_names")
+        ds = dp.deepstream_config(onnx, class_names=names,
+                                  network_mode=int(body.get("network_mode", 2)))
+        if ds.get("error"):
+            raise HTTPException(400, ds["error"])
+        tr = dp.triton_config(onnx, model_name=body.get("model_name"),
+                              max_batch_size=int(body.get("max_batch_size", 1)))
+        merged = {**ds, "config_pbtxt": tr.get("config_pbtxt"), "io": ds.get("io")}
+        title = (body.get("title") or "Edge deploy").strip()
+        html = eda_report.render_deploy_html(merged, title)
+        rid = report_store.save_report(html, owner=get_current_user(request), meta={"title": title})
+        return {"report_id": rid, "report_url": f"/api/cv/report/{rid}",
+                "input_hw": ds.get("input_hw"), "outputs": [o["name"] for o in ds["io"]["outputs"]]}
+
+    @router.post("/api/cv/calibration")
+    def cv_calibration(request: Request, body: dict = Body(...)):
+        """Select a diverse INT8 calibration subset from an images dir."""
+        require_admin(request)
+        from src.services.cv import deploy as dp
+        images_dir = (body.get("images_dir") or "").strip()
+        if not images_dir:
+            raise HTTPException(400, "images_dir is required")
+        res = dp.select_calibration_set(images_dir, n=int(body.get("n", 200)),
+                                        out_file=(body.get("out_file") or "").strip() or None)
+        if res.get("error"):
+            raise HTTPException(400, res["error"])
+        return res
+
+    @router.post("/api/cv/convert-data")
+    def cv_convert_data(request: Request, body: dict = Body(...)):
+        """Convert COCO/VOC/Label-Studio annotations to YOLO."""
+        require_admin(request)
+        from src.services.cv import convert_data as cd
+        src = (body.get("src") or "").strip()
+        out = (body.get("out_dir") or "").strip()
+        if not src or not out:
+            raise HTTPException(400, "src and out_dir are required")
+        res = cd.convert_annotations(src, body.get("format", "coco"), out, body.get("class_names"))
+        if res.get("error"):
+            raise HTTPException(400, res["error"])
+        return res
+
+    @router.post("/api/cv/class-map")
+    def cv_class_map(request: Request, body: dict = Body(...)):
+        """Build a unified class map across sources [{name, class_names}]."""
+        require_admin(request)
+        from src.services.cv import convert_data as cd
+        sources = body.get("sources") or []
+        if not sources:
+            raise HTTPException(400, "sources is required")
+        return cd.auto_class_map(sources)
+
+    @router.post("/api/cv/split-stratified")
+    def cv_split_stratified(request: Request, body: dict = Body(...)):
+        """Leak-free stratified train/val split (keeps each source together)."""
+        require_admin(request)
+        from src.services.cv import convert_data as cd
+        labels_dir = (body.get("labels_dir") or "").strip()
+        if not labels_dir:
+            raise HTTPException(400, "labels_dir is required")
+        res = cd.stratified_split(labels_dir, val_frac=float(body.get("val_frac", 0.2)),
+                                  seed=int(body.get("seed", 0)),
+                                  source_regex=(body.get("source_regex") or "").strip() or None,
+                                  class_names=body.get("class_names"))
+        if res.get("error"):
+            raise HTTPException(400, res["error"])
+        return res
+
     @router.get("/api/cv/report/{report_id}")
     def cv_get_report(request: Request, report_id: str):
         """Serve a stored CV report as HTML (owner-scoped)."""

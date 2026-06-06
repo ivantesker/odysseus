@@ -451,6 +451,35 @@ def render_eval_aggregate_html(agg: dict, title: str = "Eval aggregate") -> str:
                                  "every CSV under the folder, best first"))
 
 
+def _io_table(io: dict) -> str:
+    def _rows(items, kind):
+        return "".join(
+            f'<tr><td class="sev" style="color:{_BARS[0]}">{kind}</td><td class="k">{_esc(t["name"])}</td>'
+            f'<td>{_esc(t["shape"])}</td><td class="d">{_esc(t["dtype"])}</td></tr>' for t in items)
+    return (f'<table class="warn"><thead><tr><th></th><th>tensor</th><th>shape</th><th>dtype</th></tr></thead>'
+            f'<tbody>{_rows(io.get("inputs", []), "in")}{_rows(io.get("outputs", []), "out")}</tbody></table>')
+
+
+def render_deploy_html(deploy: dict, title: str = "Edge deploy") -> str:
+    """Render generated edge configs (ONNX I/O + DeepStream + Triton) as
+    copyable text blocks."""
+    parts = []
+    io = deploy.get("io")
+    if io and not io.get("error"):
+        size = f' · {io.get("size_mb")} MB' if io.get("size_mb") else ""
+        parts.append(_section(f"Model I/O{size}", _io_table(io), "tensors read from the ONNX model"))
+    for key, label, note in [
+        ("deepstream_config", "DeepStream nvinfer config", "save as config_infer.txt next to the .onnx"),
+        ("config_pbtxt", "Triton config.pbtxt", "save as <model>/config.pbtxt"),
+        ("labels_txt", "labels.txt", "one class per line"),
+    ]:
+        if deploy.get(key):
+            parts.append(_section(label, f'<pre class="cfg">{_esc(deploy[key])}</pre>', note))
+    if not parts:
+        parts.append(_section("Deploy", f'<p class="err">{_esc(deploy.get("error", "no output"))}</p>'))
+    return _page(title, "".join(parts))
+
+
 def render_eda_html(eda: dict, title: str = "Dataset EDA") -> str:
     if eda.get("error"):
         body = f'<section><p class="err">{_esc(eda["error"])}</p></section>'
@@ -539,6 +568,7 @@ table.warn td {{ padding:6px 8px; border-bottom:1px solid {_BORDER}33; vertical-
 table.warn td.k {{ font-family:ui-monospace,monospace; color:{_FG}; }} table.warn td.n {{ font-weight:700; }}
 table.warn td.d {{ color:{_MUTED}; }} table.warn .ex {{ color:{_MUTED}; font-size:11px; opacity:.7; margin-top:2px; font-family:ui-monospace,monospace; }}
 .sev {{ font-weight:700; font-size:11px; letter-spacing:.04em; }}
+pre.cfg {{ background:#0e0f13; border:1px solid {_BORDER}; border-radius:8px; padding:12px 14px; overflow:auto; font-size:11.5px; line-height:1.45; color:{_FG}; white-space:pre; }}
 .legend {{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }}
 .legend .lg {{ display:inline-flex; align-items:center; gap:6px; background:{_BG}; border:1px solid {_BORDER}; border-radius:20px; padding:3px 10px 3px 6px; font-size:12px; }}
 .legend .sw {{ width:12px; height:12px; border-radius:3px; display:inline-block; }}

@@ -164,6 +164,93 @@ def review_labels(args, ctx=None):
     }
 
 
+# ── deploy_config ─────────────────────────────────────────────────────────────
+
+@register_tool(
+    "deploy_config",
+    admin=True,
+    description=(
+        "Generate edge deploy configs from an ONNX model: DeepStream nvinfer "
+        "config + labels.txt and a Triton config.pbtxt, with I/O shapes read "
+        "from the model. Returns a report URL."
+    ),
+    keywords=["deploy", "deepstream", "triton", "nvinfer", "edge", "rk3588", "config", "onnx"],
+    schema={
+        "type": "object",
+        "properties": {
+            "onnx": {"type": "string", "description": "path to the .onnx model"},
+            "class_names": {"type": "array", "items": {"type": "string"}},
+            "network_mode": {"type": "integer", "description": "0=FP32 1=INT8 2=FP16", "default": 2},
+            "max_batch_size": {"type": "integer", "default": 1},
+        },
+        "required": ["onnx"],
+    },
+    fenced_help=(
+        "Generate DeepStream + Triton configs from an ONNX model.\n"
+        "```deploy_config\n"
+        '{"onnx": "D:/models/best.onnx", "class_names": ["Front","Back","Side"], "network_mode": 2}\n'
+        "```"
+    ),
+)
+def deploy_config(args, ctx=None):
+    onnx = (args.get("onnx") or "").strip()
+    if not onnx:
+        return {"error": "deploy_config needs onnx", "exit_code": 1}
+    from src.services.cv import deploy as dp
+    from src.services.cv import eda_report, report_store
+    names = args.get("class_names")
+    ds_cfg = dp.deepstream_config(onnx, class_names=names, network_mode=int(args.get("network_mode", 2)))
+    if ds_cfg.get("error"):
+        return {"error": ds_cfg["error"], "exit_code": 1}
+    tr = dp.triton_config(onnx, model_name=args.get("model_name"),
+                          max_batch_size=int(args.get("max_batch_size", 1)))
+    merged = {**ds_cfg, "config_pbtxt": tr.get("config_pbtxt")}
+    html = eda_report.render_deploy_html(merged, args.get("title") or "Edge deploy")
+    rid = report_store.save_report(html, owner=(ctx or {}).get("owner"), meta={"title": "Edge deploy"})
+    return {"action": "deploy", "report_id": rid, "report_url": f"/api/cv/report/{rid}",
+            "input_hw": ds_cfg.get("input_hw"),
+            "outputs": [o["name"] for o in ds_cfg["io"]["outputs"]], "exit_code": 0}
+
+
+# ── convert_dataset ───────────────────────────────────────────────────────────
+
+@register_tool(
+    "convert_dataset",
+    admin=True,
+    description=(
+        "Convert COCO / Pascal-VOC / Label-Studio annotations to YOLO labels. "
+        "Returns counts + discovered class names."
+    ),
+    keywords=["convert", "coco", "voc", "pascal", "label studio", "annotation", "yolo", "import"],
+    schema={
+        "type": "object",
+        "properties": {
+            "src": {"type": "string", "description": "COCO json / VOC xml dir / Label-Studio json"},
+            "format": {"type": "string", "enum": ["coco", "voc", "labelstudio"]},
+            "out_dir": {"type": "string", "description": "output YOLO labels dir"},
+            "class_names": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["src", "format", "out_dir"],
+    },
+    fenced_help=(
+        "Convert annotations to YOLO format.\n"
+        "```convert_dataset\n"
+        '{"src": "D:/export.json", "format": "coco", "out_dir": "D:/ds/labels"}\n'
+        "```"
+    ),
+)
+def convert_dataset(args, ctx=None):
+    src = (args.get("src") or "").strip()
+    out = (args.get("out_dir") or "").strip()
+    if not src or not out:
+        return {"error": "convert_dataset needs src and out_dir", "exit_code": 1}
+    from src.services.cv import convert_data as cd
+    res = cd.convert_annotations(src, args.get("format", "coco"), out, args.get("class_names"))
+    if res.get("error"):
+        return {"error": res["error"], "exit_code": 1}
+    return {"action": "convert_dataset", **res, "exit_code": 0}
+
+
 # ── eval_detector ─────────────────────────────────────────────────────────────
 
 @register_tool(
