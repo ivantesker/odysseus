@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from core.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
 from src.llm_core import _detect_provider, _host_match
+from src.services import model_service
 from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.endpoint_resolver import (
@@ -214,57 +215,9 @@ def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False
 # ── Curated model lists per provider ──
 # For cloud providers that return 100+ models, only show these by default.
 # A model ID matches if it starts with or equals a curated entry.
-_PROVIDER_CURATED = {
-    "openai": [
-        "gpt-5.2", "gpt-5.2-pro", "gpt-5", "gpt-5-pro", "gpt-5-mini", "gpt-5-nano",
-        "gpt-4o", "gpt-4o-mini", "o3", "o4-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano",
-        "gpt-image-1.5", "gpt-image-1", "dall-e-3", "tts-1", "whisper-1",
-    ],
-    "anthropic": [
-        "claude-sonnet-4", "claude-opus-4", "claude-haiku-4",
-        "claude-sonnet-4-5", "claude-haiku-3-5",
-    ],
-    "zai": [
-        "glm-5", "glm-5.1", "glm-5v-turbo", "glm-4.7", "glm-4.7-flash",
-        "glm-4.6", "glm-4.6v",
-        "glm-4.5", "glm-4.5v", "glm-4.5-air", "glm-4.5-flash",
-    ],
-    "zai-coding": [
-        "glm-5.1", "glm-5v-turbo", "glm-5-turbo", "glm-4.7", "glm-4.5-air",
-    ],
-    "deepseek": [
-        "deepseek-chat", "deepseek-reasoner",
-    ],
-    "groq": [
-        "openai/gpt-oss-120b", "openai/gpt-oss-20b",
-        "groq/compound", "groq/compound-mini",
-        "llama-3.1-8b-instant",
-        "llama-3.3-70b-versatile",
-        "llama-4-scout-17b-16e-instruct",
-        "llama-4-maverick-17b-128e-instruct",
-    ],
-    "mistral": [
-        "mistral-large-latest", "mistral-medium-latest", "mistral-small-latest",
-    ],
-    "together": [
-        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-        "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
-        "deepseek-ai/DeepSeek-R1",
-        "Qwen/Qwen2.5-72B-Instruct-Turbo",
-    ],
-    "fireworks": [
-        "accounts/fireworks/models/llama4-scout-instruct-basic",
-        "accounts/fireworks/models/llama4-maverick-instruct-basic",
-        "accounts/fireworks/models/deepseek-r1",
-    ],
-    "google": [
-        "gemini-3.5", "gemini-3.1", "gemini-3",
-        "gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
-    ],
-    "xai": [
-        "grok-4.3", "grok-4", "grok-4-fast", "grok-3", "grok-3-fast",
-    ],
-}
+# Pure model-curation/parsing/classification logic lives in the model service;
+# alias the names used across this module so callers are unchanged.
+_PROVIDER_CURATED = model_service.PROVIDER_CURATED
 
 # Map hostnames → curated-list keys for providers whose _detect_provider()
 # returns a generic value (e.g. "openai") but deserve their own curated list.
@@ -304,57 +257,10 @@ def _match_provider_curated(base_url: str, provider: str) -> str:
     return provider
 
 
-def _curate_models(model_ids, provider):
-    """Partition model_ids into (curated, extra) based on provider's curated list.
-    If no curated list exists for the provider, returns (model_ids, [])."""
-    if provider == "openrouter":
-        return model_ids, []
-    curated_list = _PROVIDER_CURATED.get(provider)
-    if not curated_list:
-        return model_ids, []
-    curated = []
-    extra = []
-    def _best_match_idx(mid):
-        """Return index of the longest matching curated entry, or -1."""
-        best_i, best_len = -1, 0
-        for i, entry in enumerate(curated_list):
-            if (mid == entry or mid.startswith(entry)) and len(entry) > best_len:
-                best_i, best_len = i, len(entry)
-        return best_i
-
-    for mid in model_ids:
-        if _best_match_idx(mid) >= 0:
-            curated.append(mid)
-        else:
-            extra.append(mid)
-    # Sort curated models by their priority order in the curated list
-    curated.sort(key=lambda mid: (_best_match_idx(mid), mid))
-    return curated, extra
-
-
-def _truthy(value: str | None) -> bool:
-    return (value or "").strip().lower() in ("true", "1", "yes", "on")
-
-
-_ENDPOINT_KINDS = {"auto", "local", "api", "proxy"}
-_REFRESH_MODES = {"auto", "manual", "disabled"}
-
-
-def _normalize_endpoint_kind(value: Any) -> str:
-    kind = str(value or "auto").strip().lower()
-    return kind if kind in _ENDPOINT_KINDS else "auto"
-
-
-def _normalize_refresh_mode(value: Any, endpoint_kind: str = "auto") -> str:
-    mode = str(value or "").strip().lower()
-    kind = _normalize_endpoint_kind(endpoint_kind)
-    if mode in ("manual", "disabled"):
-        return mode
-    if mode == "auto" and kind != "proxy":
-        return "auto"
-    # Proxies default to manual cached-first behavior. Normal local/API
-    # endpoints keep automatic bounded refreshes.
-    return "manual" if kind == "proxy" else "auto"
+_curate_models = model_service.curate_models
+_truthy = model_service.truthy
+_normalize_endpoint_kind = model_service.normalize_endpoint_kind
+_normalize_refresh_mode = model_service.normalize_refresh_mode
 
 
 def _endpoint_kind(ep: Any) -> str:
@@ -402,44 +308,8 @@ def _manual_refresh_timeout(ep: Any, category: str, requested: Any = None) -> fl
     return float(max(stored or 30, 30))
 
 
-def _parse_model_list(raw: Any) -> list[str]:
-    """Return a sanitized list of model ids from JSON/list/comma text."""
-    if raw is None:
-        return []
-    value = raw
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return []
-        try:
-            parsed = json.loads(text)
-            if isinstance(parsed, list):
-                value = parsed
-            else:
-                value = re.split(r"[\n,]+", text)
-        except Exception:
-            value = re.split(r"[\n,]+", text)
-    if not isinstance(value, list):
-        return []
-    out = []
-    seen = set()
-    for item in value:
-        mid = str(item or "").strip()
-        if not mid or mid in seen:
-            continue
-        seen.add(mid)
-        out.append(mid)
-    return out
-
-
-def _parse_positive_int(raw: Any, *, minimum: int = 1, maximum: int = 86400) -> int | None:
-    try:
-        val = int(str(raw).strip())
-    except Exception:
-        return None
-    if val < minimum:
-        return None
-    return min(val, maximum)
+_parse_model_list = model_service.parse_model_list
+_parse_positive_int = model_service.parse_positive_int
 
 
 def _explicit_model_list_timeout(base_url: str, endpoint_kind: str = "auto", requested: Any = None) -> float:
@@ -471,35 +341,7 @@ def _is_ollama_base(base_url: str) -> bool:
         return "ollama" in (base_url or "").lower()
 
 
-# Prefixes/substrings for models that are NOT chat-completions-capable
-_NON_CHAT_PREFIXES = (
-    "dall-e", "tts-", "whisper", "text-embedding", "embedding",
-    "davinci", "babbage", "moderation", "omni-moderation",
-    "sora", "gpt-image", "chatgpt-image",
-)
-_NON_CHAT_CONTAINS = (
-    "-realtime", "-transcribe", "-tts", "-codex",
-    "codex-",
-)
-_NON_CHAT_EXACT_PREFIXES = (
-    "gpt-audio",  # gpt-audio, gpt-audio-mini etc. (not gpt-4o-audio-preview which is chat)
-    "gpt-3.5-turbo-instruct",  # legacy OpenAI completions model
-)
-
-
-def _is_chat_model(model_id: str) -> bool:
-    """Return True if the model ID looks like a chat/completions-capable model."""
-    mid = model_id.lower()
-    for prefix in _NON_CHAT_PREFIXES:
-        if mid.startswith(prefix):
-            return False
-    for prefix in _NON_CHAT_EXACT_PREFIXES:
-        if mid.startswith(prefix):
-            return False
-    for substr in _NON_CHAT_CONTAINS:
-        if substr in mid:
-            return False
-    return True
+_is_chat_model = model_service.is_chat_model
 
 
 def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 10, with_tools: bool = False) -> dict:
@@ -752,68 +594,9 @@ def _model_endpoint_error_message(base_url: str, ping: dict[str, Any] = None) ->
     return "No models found for that provider/key."
 
 
-def _normalize_model_ids(value):
-    """Coerce a model-ID input into a clean, ordered list of strings.
-
-    Accepts a list, a JSON-encoded list string, or a comma/newline separated
-    string (handy for form or backend API input). Trims whitespace, drops
-    empty and non-string values, and de-duplicates preserving first-seen order.
-    """
-    if value is None:
-        return []
-    items = value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return []
-        try:
-            parsed = json.loads(text)
-        except Exception:
-            parsed = None
-        items = parsed if isinstance(parsed, list) else re.split(r"[,\n]", text)
-    if not isinstance(items, list):
-        return []
-    out, seen = [], set()
-    for item in items:
-        if not isinstance(item, str):
-            continue
-        s = item.strip()
-        if not s or s in seen:
-            continue
-        seen.add(s)
-        out.append(s)
-    return out
-
-
-def _merge_model_ids(*lists):
-    """Concatenate model-ID lists, de-duplicating and preserving order."""
-    out, seen = [], set()
-    for ids in lists:
-        for m in (ids or []):
-            if not isinstance(m, str) or m in seen:
-                continue
-            seen.add(m)
-            out.append(m)
-    return out
-
-
-def _visible_models(cached_models, hidden_models, pinned_models=None):
-    """Merge cached + pinned model IDs, then filter out hidden ones.
-
-    Pinned IDs are admin-entered and may not appear in cached_models (e.g.
-    cloud deployment IDs the provider does not list in /v1/models). Returns an
-    ordered, de-duplicated list of visible IDs.
-    """
-    # Normalize each input so JSON strings, lists, comma/newline strings, and
-    # malformed strings are all handled without raising.
-    merged = _merge_model_ids(
-        _normalize_model_ids(cached_models),
-        _normalize_model_ids(pinned_models),
-    )
-    if not hidden_models:
-        return merged
-    hidden = set(_normalize_model_ids(hidden_models))
-    return [m for m in merged if m not in hidden]
+_normalize_model_ids = model_service.normalize_model_ids
+_merge_model_ids = model_service.merge_model_ids
+_visible_models = model_service.visible_models
 
 
 def setup_model_routes(model_discovery):
