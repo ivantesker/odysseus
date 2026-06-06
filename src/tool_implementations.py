@@ -13,6 +13,8 @@ import re
 from typing import Any, Dict, List, Optional
 from datetime import UTC
 
+from src.services import tool_text_service
+
 MAX_OUTPUT_CHARS = 10_000
 MAX_READ_CHARS = 20_000
 
@@ -22,10 +24,8 @@ def get_mcp_manager():
     return agent_tools.get_mcp_manager()
 
 
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
+# Pure text helpers live in tool_text_service; alias the names this module uses.
+_truncate = tool_text_service.truncate
 
 logger = logging.getLogger(__name__)
 
@@ -33,37 +33,7 @@ logger = logging.getLogger(__name__)
 # Argument parsing
 # ---------------------------------------------------------------------------
 
-def _parse_tool_args(content):
-    """Parse a tool-call argument blob.
-
-    Accepts either a JSON string or an already-decoded dict. Unwraps the
-    common `{"body": {...}}` envelope that smaller models emit when they
-    read tool descriptions like "Body is JSON: {...}" literally — they
-    pass `body` as a field name rather than treating it as a noun.
-
-    Returns a dict on success, raises ValueError on bad JSON.
-    """
-    if isinstance(content, str):
-        try:
-            args = json.loads(content) if content.strip() else {}
-        except (json.JSONDecodeError, TypeError) as e:
-            raise ValueError(str(e)) from e
-    elif isinstance(content, dict):
-        args = content
-    else:
-        args = {}
-    # Unwrap {"body": {...}} envelope — but only if `body` is the sole key
-    # and points at a dict. We don't want to clobber a legitimate `body`
-    # field on tools where it's a real arg (e.g. send_email body text).
-    if (
-        isinstance(args, dict)
-        and len(args) == 1
-        and "body" in args
-        and isinstance(args["body"], dict)
-        and "action" in args["body"]  # extra safety: only unwrap if the inner dict looks like a tool call
-    ):
-        args = args["body"]
-    return args
+_parse_tool_args = tool_text_service.parse_tool_args
 
 
 # ---------------------------------------------------------------------------
@@ -138,83 +108,9 @@ def _most_recent_owned_document(db, Document, owner: str | None, active_only: bo
 # Document tools — create/update/edit/suggest living documents
 # ---------------------------------------------------------------------------
 
-def _sniff_doc_language(text: str) -> str:
-    """Best-effort detect a document's language from its content when the model
-    didn't specify one. Defaults to 'markdown' (prose). Recognizes the common
-    markup/code types the editor supports so e.g. an SVG isn't saved as markdown."""
-    import json as _json, re as _re2
-    s = (text or "").strip()
-    if not s:
-        return "markdown"
-    head = s[:600]
-    hl = head.lower()
-    if _looks_like_email_document(s):
-        return "email"
-    # Markup (unambiguous)
-    if "<svg" in hl:
-        return "svg"
-    if hl.startswith("<?xml"):
-        return "xml"
-    if (hl.startswith("<!doctype html") or hl.startswith("<html")
-            or _re2.search(r"<(div|body|head|p|span|table|button|h[1-6]|ul|ol|li|img)\b", hl)):
-        return "html"
-    # JSON
-    if s[0] in "{[":
-        try:
-            _json.loads(s)
-            return "json"
-        except Exception:
-            pass
-    # Shebang
-    first = s.split("\n", 1)[0].strip().lower()
-    if first.startswith("#!"):
-        return "python" if "python" in first else "bash"
-    # Code by strong leading signals (line-anchored so prose with stray words won't match)
-    if _re2.search(r"(?m)^\s*(def \w|class \w|import \w|from \w[\w.]* import )", s):
-        return "python"
-    if _re2.search(r"(?m)^\s*(function \w|const \w|let \w|export |import .* from )", s):
-        return "javascript"
-    if _re2.search(r"(?mi)^\s*(select .* from |create table |insert into |update \w)", s):
-        return "sql"
-    if _re2.search(r"(?m)^[.#]?[\w-]+\s*\{[^{}]*:[^{}]*;", s):
-        return "css"
-    return "markdown"
-
-
-def _looks_like_email_document(text: str = "", title: str = "") -> bool:
-    import re as _re
-    title_l = (title or "").strip().lower()
-    if title_l in {"new email", "new mail", "new message"}:
-        return True
-    s = (text or "").lstrip()
-    if "\n---\n" in s and _re.search(r"(?im)^To:\s*", s) and _re.search(r"(?im)^Subject:\s*", s):
-        return True
-    return bool(_re.search(r"(?im)^To:\s*", s) and _re.search(r"(?im)^Subject:\s*", s))
-
-
-def _coerce_email_document_content(existing: str, incoming: str) -> str:
-    """Keep email docs in the To/Subject/---/body shape even if a model writes
-    only the body or dumps header labels without the separator."""
-    import re as _re
-    old = existing or ""
-    new = (incoming or "").strip()
-    if "\n---\n" in new:
-        return new
-    header = old.split("\n---\n", 1)[0] if "\n---\n" in old else "To: \nSubject: "
-    if _looks_like_email_document(new):
-        lines = new.splitlines()
-        last_header_idx = -1
-        header_re = _re.compile(r"^(To|Cc|Bcc|Subject|In-Reply-To|References|X-Source-UID|X-Source-Folder|X-Attachments):", _re.I)
-        for i, line in enumerate(lines):
-            if header_re.match(line.strip()):
-                last_header_idx = i
-        body_lines = lines[last_header_idx + 1:] if last_header_idx >= 0 else lines
-        while body_lines and not body_lines[0].strip():
-            body_lines.pop(0)
-        body = "\n".join(body_lines).strip()
-    else:
-        body = new
-    return header.rstrip() + "\n---\n" + body
+_sniff_doc_language = tool_text_service.sniff_doc_language
+_looks_like_email_document = tool_text_service.looks_like_email_document
+_coerce_email_document_content = tool_text_service.coerce_email_document_content
 
 
 async def do_create_document(content_block: str, session_id: str | None = None, owner: str | None = None) -> dict:
