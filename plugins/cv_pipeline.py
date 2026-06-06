@@ -501,7 +501,8 @@ def convert_model(args, ctx=None):
 
     parity = None
     if args.get("parity", True) and onnx_path:
-        parity = _pt_onnx_parity(source, str(onnx_path), imgsz)
+        parity = _pt_onnx_parity(source, str(onnx_path), imgsz,
+                                 sample_image=(args.get("calib_image") or args.get("sample_image")))
 
     return {
         "action": "convert",
@@ -513,13 +514,30 @@ def convert_model(args, ctx=None):
     }
 
 
-def _pt_onnx_parity(pt_path: str, onnx_path: str, imgsz: int) -> dict:
-    """Run one deterministic input through the PT and ONNX graphs, diff outputs."""
+def _parity_input(imgsz: int, sample_image: str | None):
+    """A realistic parity input: a decoded real image if given, else uniform
+    random in [0,1]. NEVER all-zeros — that under-exercises batchnorm/activations
+    and gives false-confidence parity (the input is degenerate)."""
+    import numpy as np
+    if sample_image:
+        try:
+            from PIL import Image
+            im = Image.open(sample_image).convert("RGB").resize((imgsz, imgsz))
+            arr = np.asarray(im, dtype=np.float32) / 255.0
+            return arr.transpose(2, 0, 1)[None, ...]
+        except Exception:
+            pass
+    rng = np.random.RandomState(0)
+    return rng.rand(1, 3, imgsz, imgsz).astype(np.float32)
+
+
+def _pt_onnx_parity(pt_path: str, onnx_path: str, imgsz: int, sample_image: str | None = None) -> dict:
+    """Run a realistic input through the PT and ONNX graphs, diff outputs."""
     try:
-        import numpy as np
+        import numpy as np  # noqa: F401
 
         from src.services.cv.parity import output_diff
-        x = np.zeros((1, 3, imgsz, imgsz), dtype=np.float32)
+        x = _parity_input(imgsz, sample_image)
         try:
             import torch
             from ultralytics import YOLO

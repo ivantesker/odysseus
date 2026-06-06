@@ -60,6 +60,23 @@ def test_convert_model_missing_source():
     assert "not found" in res["error"].lower()
 
 
+def test_parity_input_never_zeros(tmp_path):
+    import numpy as np
+    from plugins.cv_pipeline import _parity_input
+    x = _parity_input(64, None)
+    assert x.shape == (1, 3, 64, 64)
+    assert x.min() >= 0.0 and x.max() <= 1.0
+    assert x.std() > 0.01  # realistic, not degenerate zeros
+
+    pytest = __import__("pytest")
+    pytest.importorskip("PIL")
+    from PIL import Image
+    p = tmp_path / "s.png"
+    Image.fromarray((np.random.RandomState(0).rand(50, 70, 3) * 255).astype(np.uint8)).save(p)
+    xi = _parity_input(64, str(p))
+    assert xi.shape == (1, 3, 64, 64) and xi.max() <= 1.0
+
+
 def test_convert_model_existing_source_without_stack(tmp_path):
     pt = tmp_path / "m.pt"
     pt.write_bytes(b"not a real model")
