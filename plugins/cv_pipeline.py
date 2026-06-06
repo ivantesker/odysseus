@@ -138,6 +138,7 @@ def review_labels(args, ctx=None):
     iou = float(args.get("iou", 0.5))
     names = args.get("class_names")
     review = {
+        "iou": iou,
         "pr": rv.pr_analysis(labels_dir, preds_dir, iou_thr=iou, class_names=names),
         "suspect_labels": rv.suspect_labels(labels_dir, preds_dir, iou_thr=iou),
         "confusion_matrix": rv.confusion_matrix(labels_dir, preds_dir, iou_thr=iou, class_names=names),
@@ -146,7 +147,7 @@ def review_labels(args, ctx=None):
         from src.services.cv import imagescan
         fc = rv.failure_cases(labels_dir, preds_dir, iou_thr=iou)
         review["failure_gallery"] = {
-            "rendered": imagescan.render_boxed(args["images_dir"], fc["cases"], class_names=names),
+            "rendered": imagescan.render_boxed(args["images_dir"], fc["cases"], class_names=names, max_side=640),
             "totals": fc["totals"],
         }
     if (args.get("preds_b_dir") or "").strip():

@@ -51,17 +51,28 @@ def _summarize_csv(path: Path) -> dict | None:
     return metrics or None
 
 
-def aggregate_csvs(root, *, limit: int = 200) -> dict:
+def aggregate_csvs(root, *, limit: int = 200, max_depth: int = 6) -> dict:
     """Walk `root`, summarize every CSV, return a comparison table."""
     base = Path(root)
     if not base.exists():
         return {"error": f"path not found: {root}"}
-    files = sorted(base.rglob("*.csv"))[:limit]
+    # Skip dependency / VCS dirs so a broad root doesn't pull e.g. numpy's
+    # validation CSVs shipped inside a venv.
+    skip = {"venv", ".venv", "site-packages", "node_modules", ".git", "__pycache__",
+            "dist-info", ".tox", "env"}
+    base_depth = len(base.parts)
+    files = [f for f in sorted(base.rglob("*.csv"))
+             if not (skip & {p.lower() for p in f.parts})
+             and len(f.parts) - base_depth <= max_depth][:limit]
+    skipped = 0
     runs = []
     all_metrics: list[str] = []
     for f in files:
         m = _summarize_csv(f)
-        if not m:
+        # Require >=2 numeric columns and a sane width so raw data dumps /
+        # single-column files aren't treated as eval results.
+        if not m or len(m) < 2 or len(m) > 80:
+            skipped += 1
             continue
         # Name by the parent folder if it looks like a run dir, else the file stem.
         name = f.parent.name if f.name in ("results.csv", "metrics.csv", "eval.csv") else f.stem
@@ -75,4 +86,5 @@ def aggregate_csvs(root, *, limit: int = 200) -> dict:
     # Sort runs by the primary metric desc (best first) when present.
     if primary:
         runs.sort(key=lambda r: r["metrics"].get(primary, float("-inf")), reverse=True)
-    return {"runs": runs, "metrics": all_metrics, "primary": primary, "n_files": len(files)}
+    return {"runs": runs, "metrics": all_metrics, "primary": primary,
+            "n_files": len(files), "skipped": skipped}

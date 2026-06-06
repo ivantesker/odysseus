@@ -41,10 +41,11 @@ def coco_to_yolo(coco_json: str, out_labels_dir: str) -> dict:
     for ann in data.get("annotations", []):
         by_img[ann["image_id"]].append(ann)
     out = Path(out_labels_dir)
-    n_img = n_box = 0
+    n_img = n_box = skipped = 0
     for img_id, im in images.items():
         iw, ih = im.get("width"), im.get("height")
         if not iw or not ih:
+            skipped += 1
             continue
         lines = []
         for ann in by_img.get(img_id, []):
@@ -57,7 +58,7 @@ def coco_to_yolo(coco_json: str, out_labels_dir: str) -> dict:
         _write_yolo(out, Path(im["file_name"]).stem, lines)
         n_img += 1
     return {"format": "coco", "images": n_img, "boxes": n_box,
-            "class_names": class_names, "out_dir": str(out)}
+            "skipped_images": skipped, "class_names": class_names, "out_dir": str(out)}
 
 
 def voc_to_yolo(voc_xml_dir: str, out_labels_dir: str, class_names: list[str] | None = None) -> dict:
@@ -68,15 +69,17 @@ def voc_to_yolo(voc_xml_dir: str, out_labels_dir: str, class_names: list[str] | 
     names = list(class_names) if class_names else []
     name_to_idx = {n: i for i, n in enumerate(names)}
     out = Path(out_labels_dir)
-    n_img = n_box = 0
+    n_img = n_box = skipped = 0
     for xml in sorted(root.rglob("*.xml")):
         try:
             tree = ET.parse(xml)
         except ET.ParseError:
+            skipped += 1
             continue
         r = tree.getroot()
         size = r.find("size")
         if size is None:
+            skipped += 1
             continue
         iw, ih = int(size.findtext("width", 0)), int(size.findtext("height", 0))
         if not iw or not ih:
@@ -99,7 +102,8 @@ def voc_to_yolo(voc_xml_dir: str, out_labels_dir: str, class_names: list[str] | 
             n_box += 1
         _write_yolo(out, xml.stem, lines)
         n_img += 1
-    return {"format": "voc", "images": n_img, "boxes": n_box, "class_names": names, "out_dir": str(out)}
+    return {"format": "voc", "images": n_img, "boxes": n_box, "skipped_files": skipped,
+            "class_names": names, "out_dir": str(out)}
 
 
 def labelstudio_to_yolo(ls_json: str, out_labels_dir: str) -> dict:

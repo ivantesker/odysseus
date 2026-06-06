@@ -398,6 +398,9 @@ def _pr_section(pr: dict) -> str:
 def render_review_html(review: dict, title: str = "Model review") -> str:
     """Render the GT-vs-predictions review: suspects + confusion + model diff."""
     parts = []
+    iou = review.get("iou")
+    if iou is not None:
+        parts.append(f'<p class="muted">matching at IoU ≥ {_esc(iou)} — set this to your real NMS/eval threshold for accurate failure ranking</p>')
     if review.get("failure_gallery"):
         fg = review["failure_gallery"]
         parts.append(_failure_gallery(fg.get("rendered", []), fg.get("totals", {})))

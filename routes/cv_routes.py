@@ -123,6 +123,7 @@ def setup_cv_routes() -> APIRouter:
         iou = float(body.get("iou", 0.5))
         names = body.get("class_names")
         review = {
+            "iou": iou,
             "pr": cv_review_svc.pr_analysis(labels_dir, preds_dir, iou_thr=iou, class_names=names),
             "suspect_labels": cv_review_svc.suspect_labels(labels_dir, preds_dir, iou_thr=iou),
             "confusion_matrix": cv_review_svc.confusion_matrix(labels_dir, preds_dir, iou_thr=iou, class_names=names),
@@ -132,7 +133,7 @@ def setup_cv_routes() -> APIRouter:
             from src.services.cv import imagescan
             fc = cv_review_svc.failure_cases(labels_dir, preds_dir, iou_thr=iou)
             review["failure_gallery"] = {
-                "rendered": imagescan.render_boxed(images_dir, fc["cases"], class_names=names),
+                "rendered": imagescan.render_boxed(images_dir, fc["cases"], class_names=names, max_side=640),
                 "totals": fc["totals"],
             }
         preds_b = (body.get("preds_b_dir") or "").strip()

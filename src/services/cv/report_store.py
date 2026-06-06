@@ -46,14 +46,26 @@ def save_report(html: str, *, owner: str | None, meta: dict | None = None) -> st
     return report_id
 
 
-def list_reports(*, owner: str | None, limit: int = 50) -> list:
-    """List stored reports the owner may see, newest first."""
+def list_reports(*, owner: str | None, limit: int = 50, offset: int = 0) -> list:
+    """List stored reports the owner may see, newest first (paginated).
+
+    Sorts sidecar files by mtime FIRST (cheap stat) and only opens the
+    owner-relevant page, so a directory with thousands of reports stays fast.
+    """
     base = _reports_dir()
-    out = []
+    sidecars = []
     for jp in os.listdir(base):
         if not jp.endswith(".json"):
             continue
         path = os.path.join(base, jp)
+        try:
+            sidecars.append((path, jp, os.path.getmtime(path)))
+        except OSError:
+            continue
+    sidecars.sort(key=lambda t: -t[2])
+    out = []
+    seen = 0
+    for path, jp, mtime in sidecars:
         try:
             with open(path, encoding="utf-8") as f:
                 sc = json.load(f)
@@ -64,15 +76,15 @@ def list_reports(*, owner: str | None, limit: int = 50) -> list:
             continue
         if rep_owner and not owner:
             continue
+        if seen < offset:
+            seen += 1
+            continue
         rid = sc.get("id") or jp[:-5]
-        out.append({
-            "id": rid,
-            "title": sc.get("title") or rid,
-            "url": f"/api/cv/report/{rid}",
-            "mtime": os.path.getmtime(path),
-        })
-    out.sort(key=lambda r: -r["mtime"])
-    return out[:limit]
+        out.append({"id": rid, "title": sc.get("title") or rid,
+                    "url": f"/api/cv/report/{rid}", "mtime": mtime})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def load_report(report_id: str, *, owner: str | None) -> str | None:

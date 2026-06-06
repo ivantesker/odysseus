@@ -30,3 +30,19 @@ def test_aggregate_missing_and_empty(tmp_path):
     assert "error" in evalcsv.aggregate_csvs("/no/such")
     (tmp_path / "x").mkdir()
     assert "error" in evalcsv.aggregate_csvs(str(tmp_path))  # no CSVs
+
+
+def test_aggregate_skips_deps_and_depth(tmp_path):
+    # a CSV inside a venv/site-packages dir is ignored
+    dep = tmp_path / "venv" / "site-packages"
+    dep.mkdir(parents=True)
+    (dep / "junk.csv").write_text("a,b\n1,2\n")
+    # a too-deep CSV is ignored at max_depth=1
+    deep = tmp_path / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    (deep / "deep.csv").write_text("map,x\n0.5,1\n")
+    _run(tmp_path, "run_ok", "epoch,map50\n0,0.5\n1,0.7\n")  # base/run_ok/results.csv = depth 2
+    agg = evalcsv.aggregate_csvs(str(tmp_path), max_depth=2)
+    names = {r["name"] for r in agg["runs"]}
+    assert "run_ok" in names
+    assert "junk" not in names and "deep" not in names  # dep-dir + depth-4 excluded

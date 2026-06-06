@@ -33,3 +33,12 @@ def test_list_reports_owner_scoped_and_sorted():
     assert all(r["title"] and r["url"].startswith("/api/cv/report/") for r in mine)
     # other owner's report not listed for this owner
     assert all("someone_else" not in r.get("id", "") for r in mine)
+
+
+def test_list_reports_pagination():
+    for i in range(5):
+        rs.save_report(f"<html>{i}</html>", owner="pager", meta={"title": f"P{i}"})
+    page1 = rs.list_reports(owner="pager", limit=2, offset=0)
+    page2 = rs.list_reports(owner="pager", limit=2, offset=2)
+    assert len(page1) == 2 and len(page2) == 2
+    assert {r["id"] for r in page1}.isdisjoint({r["id"] for r in page2})

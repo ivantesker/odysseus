@@ -83,7 +83,7 @@ def scan_images(images_dir, *, sample: int = 400, max_side: int = 256,
     brightness, blur, entropy = [], [], []
     sha_groups: dict[str, list] = {}
     ahashes: list[tuple[str, int]] = []
-    errors = 0
+    failed: list[str] = []
     for p in paths:
         try:
             g, _wh = _gray_small(p, max_side)
@@ -94,7 +94,8 @@ def scan_images(images_dir, *, sample: int = 400, max_side: int = 256,
             sha_groups.setdefault(sha, []).append(p.name)
             ahashes.append((p.name, _ahash(p)))
         except Exception:
-            errors += 1
+            failed.append(p.name)
+    errors = len(failed)
 
     def _band(vals, lo_pct, hi_pct):
         if not vals:
@@ -117,6 +118,7 @@ def scan_images(images_dir, *, sample: int = 400, max_side: int = 256,
         "scanned": len(brightness),
         "total_images": total,
         "errors": errors,
+        "failed": failed[:50],
         "brightness": {"hist": _hist(brightness, 16, 0, 255), "dark_or_bright": _band(brightness, 3, 97)},
         "blur": {"hist": _hist(blur, 16), "blurry": _band_low(blur, 5)},
         "entropy": {"hist": _hist(entropy, 16)},
