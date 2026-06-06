@@ -24,6 +24,7 @@ import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
+import cvModule from './js/cv.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
@@ -907,6 +908,19 @@ function initializeEventListeners() {
     });
   }
 
+  // CV pipeline tool button
+  const toolCvBtn = el('tool-cv-btn');
+  if (toolCvBtn) {
+    toolCvBtn.addEventListener('click', async () => {
+      if (!cvModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('cv-modal')) {
+        if (cvModule.isCvOpen()) cvModule.closeCv();
+        else cvModule.openCv();
+      }
+    });
+  }
+
   // Notes tool button
   const toolNotesBtn = el('tool-notes-btn');
   if (toolNotesBtn) {
@@ -1007,6 +1021,7 @@ function initializeEventListeners() {
       }
     },
     '/calendar': () => calendarModule && calendarModule.openCalendar(),
+    '/cv':       () => cvModule && cvModule.openCv(),
     '/cookbook': () => document.getElementById('tool-cookbook-btn')?.click(),
     '/email':    () => {
       // Collapse the wide sidebar → icon rail (48px) so the user keeps

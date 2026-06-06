@@ -778,6 +778,10 @@ app.include_router(setup_companion_routes())
 from routes.capabilities_routes import setup_capabilities_routes
 app.include_router(setup_capabilities_routes(model_discovery))
 
+# CV pipeline panel (dataset lint/stats/split, eval, convert).
+from routes.cv_routes import setup_cv_routes
+app.include_router(setup_cv_routes())
+
 # Drop-in plugins: any module under plugins/ that uses the registry decorators
 # (register_route/register_tool/register_action) is loaded here with no central
 # wiring. A feature becomes one new file.
@@ -857,6 +861,10 @@ async def serve_tasks(request: Request):
 
 @app.get("/library")
 async def serve_library(request: Request):
+    return await serve_index(request)
+
+@app.get("/cv")
+async def serve_cv(request: Request):
     return await serve_index(request)
 
 @app.get("/backgrounds")
