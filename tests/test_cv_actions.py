@@ -9,6 +9,7 @@ from src.builtin_actions import (
     TaskNoop,
     action_cv_dataset_health,
     action_cv_drift_check,
+    action_cv_triton_health,
 )
 
 
@@ -52,3 +53,21 @@ def test_cv_memory_write_back(tmp_path):
     from src.services.cv import cv_memory
     assert cv_memory.remember_cv("model vX mAP 0.9", owner="t", category="project") is True
     assert cv_memory.remember_cv("", owner="t") is False  # empty → no-op
+
+
+def test_triton_check_graceful_when_down():
+    from src.services.cv import triton
+    r = triton.check_triton("http://127.0.0.1:59999", ["m1", "m2"], timeout=0.3)
+    assert r["server_ready"] is False
+    assert r["alert"] is True
+    assert set(r["down"]) == {"m1", "m2"}
+    assert "error" in triton.check_triton("")
+
+
+def test_triton_health_action():
+    assert "cv_triton_health" in BUILTIN_ACTIONS
+    msg, ok = asyncio.run(action_cv_triton_health("o", command=json.dumps({
+        "base_url": "http://127.0.0.1:59999", "models": ["m1"]})))
+    assert ok is True and "Triton" in msg
+    with pytest.raises(TaskNoop):
+        asyncio.run(action_cv_triton_health("o", command="{}"))

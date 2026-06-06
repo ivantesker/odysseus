@@ -2258,6 +2258,35 @@ async def action_cv_drift_check(owner: str, command: str | None = None, **kwargs
     return f"No significant drift (max PSI {d['max_psi']}, {d['overall_verdict']}).", True
 
 
+async def action_cv_triton_health(owner: str, command: str | None = None, **kwargs) -> tuple[str, bool]:
+    """Scheduled Triton health probe: server + per-model ready + latency.
+
+    Config (task prompt as JSON): {base_url, models:[...]}.
+    """
+    import json
+    cfg = {}
+    if command:
+        try:
+            cfg = json.loads(command)
+        except Exception:
+            pass
+    base = (cfg.get("base_url") or cfg.get("url") or "").strip()
+    if not base:
+        raise TaskNoop("cv_triton_health: set the task prompt to JSON with a base_url")
+    from src.services.cv import triton
+    from src.services.cv.cv_memory import remember_cv
+    r = triton.check_triton(base, cfg.get("models") or [])
+    if r.get("error") and not r.get("models"):
+        return f"cv_triton_health: {r['error']}", False
+    if r.get("alert"):
+        down = ", ".join(r.get("down", [])) or "server"
+        remember_cv(f"Triton health alert @ {base}: down=[{down}], server_ready={r.get('server_ready')}",
+                    owner=owner, category="project")
+        return f"⚠ Triton not healthy @ {base} — down: {down or 'server not ready'}", True
+    lat = r.get("server_latency_ms")
+    return f"Triton healthy @ {base} ({len(r.get('models', []))} models ready, {lat}ms)", True
+
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
@@ -2280,6 +2309,7 @@ BUILTIN_ACTIONS = {
     "cookbook_serve": action_cookbook_serve,
     "cv_dataset_health": action_cv_dataset_health,
     "cv_drift_check": action_cv_drift_check,
+    "cv_triton_health": action_cv_triton_health,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 
@@ -2302,4 +2332,5 @@ BUILTIN_ACTION_INFO = {
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
     "cv_dataset_health": "Scheduled YOLO dataset health check (lint/stats/warnings → grade + recommendations, saved to memory). Task prompt = JSON {labels_dir, images_dir?, class_names?}.",
     "cv_drift_check": "Scheduled prediction-drift check (PSI of new predictions vs a baseline); alerts + fires drift_detected on shift. Task prompt = JSON {baseline_preds, new_preds}.",
+    "cv_triton_health": "Scheduled Triton Inference Server health probe (server + per-model ready + latency); alerts when a model is down. Task prompt = JSON {base_url, models:[...]}.",
 }

@@ -398,6 +398,20 @@ def _pr_section(pr: dict) -> str:
 def render_review_html(review: dict, title: str = "Model review") -> str:
     """Render the GT-vs-predictions review: suspects + confusion + model diff."""
     parts = []
+    # Headline cards (eval + review in one glance).
+    pr = review.get("pr", {})
+    sl = review.get("suspect_labels", {})
+    fg = review.get("failure_gallery", {})
+    cards = []
+    if pr.get("map") is not None:
+        cards.append(f'<div class="card"><div class="num">{pr.get("map")}</div><div class="cap">mAP@{review.get("iou", 0.5)}</div></div>')
+    if sl:
+        cards.append(f'<div class="card {"warn" if sl.get("total") else ""}"><div class="num">{sl.get("total", 0)}</div><div class="cap">suspect labels</div></div>')
+    if fg:
+        n_fail = len(fg.get("rendered", []))
+        cards.append(f'<div class="card {"warn" if n_fail else ""}"><div class="num">{n_fail}</div><div class="cap">failure images</div></div>')
+    if cards:
+        parts.append(f'<div class="cards">{"".join(cards)}</div>')
     iou = review.get("iou")
     if iou is not None:
         parts.append(f'<p class="muted">matching at IoU ≥ {_esc(iou)} — set this to your real NMS/eval threshold for accurate failure ranking</p>')
