@@ -251,6 +251,89 @@ def convert_dataset(args, ctx=None):
     return {"action": "convert_dataset", **res, "exit_code": 0}
 
 
+# ── compare_runs ──────────────────────────────────────────────────────────────
+
+@register_tool(
+    "compare_runs",
+    admin=True,
+    description=(
+        "Compare training runs (Ultralytics dirs): overlay metric curves, final "
+        "metrics table, and a config diff. Returns a report URL."
+    ),
+    keywords=["training", "run", "compare", "wandb", "results.csv", "epoch", "experiment", "model selection"],
+    schema={
+        "type": "object",
+        "properties": {
+            "run_dirs": {"type": "array", "items": {"type": "string"},
+                         "description": "training run dirs (each with results.csv)"},
+            "names": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["run_dirs"],
+    },
+    fenced_help=(
+        "Compare training runs head-to-head.\n"
+        "```compare_runs\n"
+        '{"run_dirs": ["D:/runs/a", "D:/runs/b"]}\n'
+        "```"
+    ),
+)
+def compare_runs(args, ctx=None):
+    run_dirs = args.get("run_dirs") or []
+    if not run_dirs:
+        return {"error": "compare_runs needs run_dirs", "exit_code": 1}
+    from src.services.cv import eda_report, report_store
+    from src.services.cv import runs as cv_runs
+    cmp = cv_runs.compare_runs(run_dirs, names=args.get("names"))
+    if cmp.get("error"):
+        return {"error": cmp["error"], "exit_code": 1}
+    html = eda_report.render_runs_html(cmp, args.get("title") or "Training runs")
+    rid = report_store.save_report(html, owner=(ctx or {}).get("owner"), meta={"title": "Training runs"})
+    return {"action": "compare_runs", "report_id": rid, "report_url": f"/api/cv/report/{rid}",
+            "runs": len(cmp["runs"]), "primary": cmp.get("primary"), "exit_code": 0}
+
+
+# ── drift_check ───────────────────────────────────────────────────────────────
+
+@register_tool(
+    "drift_check",
+    admin=True,
+    description=(
+        "Detect prediction drift on new (unlabeled) data vs a baseline: PSI on "
+        "confidence, boxes/image, class frequency + detection-rate delta. URL."
+    ),
+    keywords=["drift", "monitor", "psi", "shift", "production", "distribution", "unlabeled"],
+    schema={
+        "type": "object",
+        "properties": {
+            "baseline_preds": {"type": "string", "description": "predictions on the eval/baseline set"},
+            "new_preds": {"type": "string", "description": "predictions on new/production data"},
+        },
+        "required": ["baseline_preds", "new_preds"],
+    },
+    fenced_help=(
+        "Check prediction drift vs a baseline.\n"
+        "```drift_check\n"
+        '{"baseline_preds": "D:/preds_baseline", "new_preds": "D:/preds_new"}\n'
+        "```"
+    ),
+)
+def drift_check(args, ctx=None):
+    base = (args.get("baseline_preds") or "").strip()
+    new = (args.get("new_preds") or "").strip()
+    if not base or not new:
+        return {"error": "drift_check needs baseline_preds and new_preds", "exit_code": 1}
+    from src.services.cv import drift as cv_drift
+    from src.services.cv import eda_report, report_store
+    d = cv_drift.drift(base, new)
+    if d.get("error"):
+        return {"error": d["error"], "exit_code": 1}
+    html = eda_report.render_drift_html(d, args.get("title") or "Drift report")
+    rid = report_store.save_report(html, owner=(ctx or {}).get("owner"), meta={"title": "Drift report"})
+    return {"action": "drift_check", "report_id": rid, "report_url": f"/api/cv/report/{rid}",
+            "overall_verdict": d["overall_verdict"], "max_psi": d["max_psi"],
+            "alert": d["alert"], "exit_code": 0}
+
+
 # ── eval_detector ─────────────────────────────────────────────────────────────
 
 @register_tool(

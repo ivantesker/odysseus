@@ -87,6 +87,15 @@ const _TABS = {
     ${_field('labels dir', 'cv-sp-labels', '', 'D:/rider_dome/yolo_dataset/labels')}
     <div class="cv-row">${_field('source regex (group 1 = source)', 'cv-sp-rx', '', '(.+)_frame')}${_field('val_frac', 'cv-sp-val', '0.2', '0.2')}</div>
     <button class="cv-run" data-action="stratified">Stratified split (report balance)</button>`,
+  runs: () => `
+    <p class="cv-hint">Compare training runs (Ultralytics dirs with results.csv) — overlay metric curves, final table, config diff.</p>
+    ${_field('run dirs (comma-separated)', 'cv-rn-dirs', '', 'D:/rider_dome/_yolov10_training/run_a, .../run_b')}
+    <button class="cv-run" data-action="compare_runs">Compare runs ↗</button>
+    <hr style="border:none;border-top:1px solid var(--border,#355a66);margin:16px 0">
+    <p class="cv-hint">Drift — model prediction distribution on new (unlabeled) data vs a baseline (PSI on conf / boxes-per-image / class freq).</p>
+    ${_field('baseline predictions dir', 'cv-dr-base', '', 'D:/rider_dome/preds_eval')}
+    ${_field('new predictions dir', 'cv-dr-new', '', 'D:/rider_dome/preds_production')}
+    <button class="cv-run" data-action="drift">Check drift ↗</button>`,
   deploy: () => `
     <p class="cv-hint">Generate DeepStream + Triton configs from an ONNX model (I/O shapes auto-read).</p>
     ${_field('onnx model', 'cv-dp-onnx', '', 'D:/rider_dome/batch_yolox/exports/model.onnx')}
@@ -117,7 +126,7 @@ function _injectStyles() {
   const s = document.createElement('style');
   s.id = 'cv-styles';
   s.textContent = `
-  #cv-modal .cv-tabs{display:flex;gap:4px;padding:8px 14px 0;border-bottom:1px solid var(--border,#355a66)}
+  #cv-modal .cv-tabs{display:flex;flex-wrap:wrap;gap:4px;padding:8px 14px 0;border-bottom:1px solid var(--border,#355a66)}
   #cv-modal .cv-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--color-muted,#888);padding:8px 12px;cursor:pointer;font-size:13px}
   #cv-modal .cv-tab.active{color:var(--fg,#9cdef2);border-bottom-color:var(--accent,#e06c75)}
   #cv-modal .cv-tag{font-size:10px;color:var(--color-muted,#888);border:1px solid var(--border,#355a66);border-radius:8px;padding:1px 6px;margin-left:6px}
@@ -134,7 +143,14 @@ function _injectStyles() {
   #cv-modal .cv-report-link{display:inline-block;background:var(--accent,#e06c75);color:#111;border-radius:7px;padding:8px 12px;text-decoration:none;font-weight:600;margin:10px 0 8px}
   #cv-modal .cv-report-frame{width:100%;height:60vh;border:1px solid var(--border,#355a66);border-radius:8px;background:#282c34;display:block}
   #cv-modal .cv-out{background:var(--panel,#111);border:1px solid var(--border,#355a66);border-radius:8px;padding:10px;font-size:11px;color:var(--color-muted,#888);max-height:240px;overflow:auto;white-space:pre-wrap;margin-top:10px}
-  #cv-modal .cv-out.cv-err{color:var(--red,#e06c75);border-color:var(--red,#e06c75)}`;
+  #cv-modal .cv-out.cv-err{color:var(--red,#e06c75);border-color:var(--red,#e06c75)}
+  #cv-modal .cv-run:disabled,#cv-modal .cv-load:disabled{opacity:0.6;cursor:wait}
+  #cv-modal .cv-spin{display:inline-block;width:11px;height:11px;border:2px solid #1118;border-top-color:#111;border-radius:50%;animation:cv-spin .7s linear infinite;vertical-align:-1px;margin-right:4px}
+  @keyframes cv-spin{to{transform:rotate(360deg)}}
+  #cv-modal .cv-history{margin-top:18px;border-top:1px solid var(--border,#355a66);padding-top:10px}
+  #cv-modal .cv-hist-h{font-size:11px;color:var(--color-muted,#888);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+  #cv-modal .cv-hist-item{display:block;font-size:12px;color:var(--hl-function,#61afef);text-decoration:none;padding:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #cv-modal .cv-hist-item:hover{text-decoration:underline}`;
   document.head.appendChild(s);
 }
 
@@ -156,12 +172,14 @@ function _getModal() {
         <button class="cv-tab" data-tab="import">Import</button>
         <button class="cv-tab" data-tab="review">Review / QA</button>
         <button class="cv-tab" data-tab="eval">Eval / bench</button>
+        <button class="cv-tab" data-tab="runs">Runs / Drift</button>
         <button class="cv-tab" data-tab="convert">Convert</button>
         <button class="cv-tab" data-tab="deploy">Deploy</button>
       </div>
       <div class="modal-body" id="cv-body" style="flex:1;overflow:auto;padding:14px 16px;">
         <div id="cv-form"></div>
         <pre id="cv-out" class="cv-out" hidden></pre>
+        <div id="cv-history" class="cv-history"></div>
       </div>
     </div>`;
   document.body.appendChild(_modal);
@@ -172,20 +190,28 @@ function _getModal() {
   });
   _modal.querySelector('#cv-form').addEventListener('click', (e) => {
     const run = e.target.closest('.cv-run');
-    if (run) { _run(run.dataset.action); return; }
+    if (run) { _run(run.dataset.action, run); return; }
     const load = e.target.closest('.cv-load');
-    if (load) _inspect();
+    if (load) _inspect(load);
   });
-  _showTab('dataset');
+  // Esc closes when on top (Odysseus modal convention).
+  _onKey = (e) => { if (e.key === 'Escape' && _open && _modal.style.display !== 'none') closeCv(); };
+  document.addEventListener('keydown', _onKey);
+  _showTab(_recall('tab') || 'dataset');
   return _modal;
 }
 
+let _onKey = null;
+
 function _showTab(name) {
   _getModal();
+  if (!_TABS[name]) name = 'dataset';
+  _remember('tab', name);
   _modal.querySelectorAll('.cv-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   _modal.querySelector('#cv-form').innerHTML = _TABS[name]();
   const out = _modal.querySelector('#cv-out');
   out.hidden = true; out.textContent = '';
+  _modal.querySelector('#cv-report-wrap')?.remove();
 }
 
 function _val(id) { return (_modal.querySelector('#' + id)?.value || '').trim(); }
@@ -193,11 +219,12 @@ function _set(id, v) { const el = _modal.querySelector('#' + id); if (el && v !=
 function _recall(key) { try { return localStorage.getItem('cv:' + key) || ''; } catch { return ''; } }
 function _remember(key, v) { try { if (v) localStorage.setItem('cv:' + key, v); } catch {} }
 
-async function _inspect() {
+async function _inspect(btn) {
   const root = _val('cv-ds-root');
   const out = _modal.querySelector('#cv-out');
   if (!root) { out.hidden = false; out.classList.add('cv-err'); out.textContent = 'Enter a dataset root path.'; return; }
   out.hidden = false; out.classList.remove('cv-err'); out.textContent = 'Inspecting…';
+  _busy(btn, true);
   try {
     const d = await _post('/api/cv/inspect', { root });
     _set('cv-ds-labels', d.labels_dir);
@@ -209,6 +236,8 @@ async function _inspect() {
       (d.splits?.length ? `, splits: ${d.splits.join(', ')}` : '');
   } catch (e) {
     out.classList.add('cv-err'); out.textContent = 'Inspect failed: ' + e.message;
+  } finally {
+    _busy(btn, false);
   }
 }
 
@@ -228,9 +257,22 @@ function _render(out, data) {
   out.textContent = JSON.stringify(data, null, 2);
 }
 
-async function _run(action) {
+function _busy(btn, on) {
+  if (!btn) return;
+  if (on) {
+    btn.dataset.label = btn.textContent;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="cv-spin"></span> working…';
+  } else {
+    btn.disabled = false;
+    if (btn.dataset.label) btn.textContent = btn.dataset.label;
+  }
+}
+
+async function _run(action, btn) {
   const out = _modal.querySelector('#cv-out');
   out.hidden = false; out.classList.remove('cv-err'); out.textContent = 'Running…';
+  _busy(btn, true);
   try {
     let data;
     if (action === 'dataset') {
@@ -281,6 +323,13 @@ async function _run(action) {
         images_dir: _val('cv-cal-img'), n: parseInt(_val('cv-cal-n') || '200', 10),
         out_file: _val('cv-cal-out'),
       });
+    } else if (action === 'compare_runs') {
+      const dirs = _val('cv-rn-dirs').split(',').map(s => s.trim()).filter(Boolean);
+      data = await _post('/api/cv/runs/compare', { run_dirs: dirs });
+    } else if (action === 'drift') {
+      data = await _post('/api/cv/drift', {
+        baseline_preds: _val('cv-dr-base'), new_preds: _val('cv-dr-new'),
+      });
     } else if (action === 'eval') {
       data = await _post('/api/cv/eval', {
         model: _val('cv-ev-model'), data: _val('cv-ev-data'),
@@ -297,9 +346,26 @@ async function _run(action) {
       });
     }
     _render(out, data);
+    _loadHistory();
   } catch (e) {
     out.hidden = false; out.classList.add('cv-err'); out.textContent = 'Error: ' + e.message;
+  } finally {
+    _busy(btn, false);
   }
+}
+
+async function _loadHistory() {
+  const el = _modal?.querySelector('#cv-history');
+  if (!el) return;
+  try {
+    const res = await fetch('/api/cv/reports', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const { reports } = await res.json();
+    if (!reports || !reports.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="cv-hist-h">Recent reports</div>'
+      + reports.slice(0, 12).map(r =>
+        `<a class="cv-hist-item" href="${r.url}" target="_blank" rel="noopener">${(r.title || r.id)}</a>`).join('');
+  } catch { /* ignore */ }
 }
 
 export function openCv() {
@@ -318,6 +384,7 @@ export function openCv() {
       M.injectMinimizeButton(_modal, 'cv-modal');
     }
   }).catch(() => {});
+  _loadHistory();
 }
 
 export function closeCv() {

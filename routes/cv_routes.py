@@ -243,6 +243,60 @@ def setup_cv_routes() -> APIRouter:
             raise HTTPException(400, res["error"])
         return res
 
+    @router.post("/api/cv/runs/register")
+    def cv_run_register(request: Request, body: dict = Body(...)):
+        """Register a training run (Ultralytics dir) into the local registry."""
+        require_admin(request)
+        from src.services.cv import runs as cv_runs
+        run_dir = (body.get("run_dir") or "").strip()
+        if not run_dir:
+            raise HTTPException(400, "run_dir is required")
+        rec = cv_runs.register_run(run_dir, name=body.get("name"), owner=get_current_user(request))
+        if rec.get("error"):
+            raise HTTPException(400, rec["error"])
+        return {"id": rec["id"], "name": rec["name"], "best": rec.get("best"), "epochs": rec.get("epochs")}
+
+    @router.get("/api/cv/runs")
+    def cv_runs_list(request: Request):
+        require_admin(request)
+        from src.services.cv import runs as cv_runs
+        return {"runs": cv_runs.list_runs(owner=get_current_user(request))}
+
+    @router.post("/api/cv/runs/compare")
+    def cv_runs_compare(request: Request, body: dict = Body(...)):
+        """Compare training runs (overlay curves + final table + config diff)."""
+        require_admin(request)
+        from src.services.cv import runs as cv_runs
+        run_dirs = body.get("run_dirs") or []
+        if not run_dirs:
+            raise HTTPException(400, "run_dirs is required")
+        cmp = cv_runs.compare_runs(run_dirs, names=body.get("names"))
+        if cmp.get("error"):
+            raise HTTPException(400, cmp["error"])
+        title = (body.get("title") or "Training runs").strip()
+        html = eda_report.render_runs_html(cmp, title)
+        rid = report_store.save_report(html, owner=get_current_user(request), meta={"title": title})
+        return {"report_id": rid, "report_url": f"/api/cv/report/{rid}",
+                "runs": len(cmp["runs"]), "primary": cmp.get("primary")}
+
+    @router.post("/api/cv/drift")
+    def cv_drift(request: Request, body: dict = Body(...)):
+        """PSI drift of model predictions on new data vs a baseline."""
+        require_admin(request)
+        from src.services.cv import drift as cv_drift
+        base = (body.get("baseline_preds") or "").strip()
+        new = (body.get("new_preds") or "").strip()
+        if not base or not new:
+            raise HTTPException(400, "baseline_preds and new_preds are required")
+        d = cv_drift.drift(base, new)
+        if d.get("error"):
+            raise HTTPException(400, d["error"])
+        title = (body.get("title") or "Drift report").strip()
+        html = eda_report.render_drift_html(d, title)
+        rid = report_store.save_report(html, owner=get_current_user(request), meta={"title": title})
+        return {"report_id": rid, "report_url": f"/api/cv/report/{rid}",
+                "overall_verdict": d["overall_verdict"], "max_psi": d["max_psi"], "alert": d["alert"]}
+
     @router.get("/api/cv/report/{report_id}")
     def cv_get_report(request: Request, report_id: str):
         """Serve a stored CV report as HTML (owner-scoped)."""

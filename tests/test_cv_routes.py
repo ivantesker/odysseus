@@ -196,6 +196,44 @@ def test_deploy_route_requires_onnx(client):
     assert client.post("/api/cv/deploy", json={}).status_code == 400
 
 
+def test_runs_compare_route(client, tmp_path):
+    for name, mp in [("a", 0.6), ("b", 0.8)]:
+        rd = tmp_path / name; rd.mkdir()
+        (rd / "results.csv").write_text(f"epoch,metrics/mAP50-95(B)\n0,{mp/2}\n1,{mp}\n")
+        (rd / "args.yaml").write_text(f"model: yolov10n\nlr0: 0.0{1 if name == 'a' else 0}1\n")
+    r = client.post("/api/cv/runs/compare", json={
+        "run_dirs": [str(tmp_path / "a"), str(tmp_path / "b")]})
+    assert r.status_code == 200 and r.json()["runs"] == 2
+    page = client.get(r.json()["report_url"])
+    assert "Final metrics" in page.text
+
+
+def test_runs_register_and_list_route(client, tmp_path):
+    rd = tmp_path / "run1"; rd.mkdir()
+    (rd / "results.csv").write_text("epoch,metrics/mAP50-95(B)\n0,0.5\n")
+    reg = client.post("/api/cv/runs/register", json={"run_dir": str(rd), "name": "run1"})
+    assert reg.status_code == 200 and reg.json()["id"].startswith("run-")
+    lst = client.get("/api/cv/runs")
+    assert any(x["id"] == reg.json()["id"] for x in lst.json()["runs"])
+
+
+def test_drift_route(client, tmp_path):
+    a = tmp_path / "a"; b = tmp_path / "b"
+    a.mkdir(); b.mkdir()
+    for i in range(20):
+        (a / f"{i}.txt").write_text("0 0.5 0.5 0.1 0.1 0.9\n")
+        (b / f"{i}.txt").write_text("1 0.5 0.5 0.1 0.1 0.3\n0 0.2 0.2 0.1 0.1 0.25\n")
+    r = client.post("/api/cv/drift", json={"baseline_preds": str(a), "new_preds": str(b)})
+    assert r.status_code == 200
+    assert r.json()["overall_verdict"] in ("stable", "moderate", "large")
+    page = client.get(r.json()["report_url"])
+    assert page.status_code == 200
+
+
+def test_drift_route_requires_both(client):
+    assert client.post("/api/cv/drift", json={"baseline_preds": "x"}).status_code == 400
+
+
 def test_calibration_route(client, tmp_path):
     pytest.importorskip("PIL")
     from PIL import Image

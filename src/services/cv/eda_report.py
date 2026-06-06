@@ -480,6 +480,99 @@ def render_deploy_html(deploy: dict, title: str = "Edge deploy") -> str:
     return _page(title, "".join(parts))
 
 
+def _curve_svg(series: dict, *, ylabel="", W=560, H=260) -> str:
+    """Multi-line curve: {name: [y per epoch]} sharing the x = epoch axis."""
+    series = {k: [v for v in vals] for k, vals in series.items() if any(x is not None for x in vals)}
+    if not series:
+        return '<p class="muted">no curve data</p>'
+    pad = 44
+    pw, ph = W - pad - 16, H - pad - 24
+    ymax = max((max(v for v in vals if v is not None) for vals in series.values()), default=1) or 1
+    xmax = max((len(vals) for vals in series.values()), default=1) - 1 or 1
+    out = [f'<rect x="{pad}" y="12" width="{pw}" height="{ph}" fill="none" stroke="{_BORDER}"/>']
+    for t in range(0, 11, 2):
+        gy = 12 + ph * (1 - t / 10)
+        out.append(f'<text x="{pad-6}" y="{gy+3}" text-anchor="end" class="val">{ymax*t/10:.2f}</text>')
+        out.append(f'<line x1="{pad}" y1="{gy}" x2="{pad+pw}" y2="{gy}" stroke="{_BORDER}" stroke-opacity="0.25"/>')
+    legend = []
+    for i, (name, vals) in enumerate(series.items()):
+        col = _BARS[i % len(_BARS)]
+        pts = " ".join(f"{pad + pw * (j / xmax)},{12 + ph * (1 - (v / ymax))}"
+                       for j, v in enumerate(vals) if v is not None)
+        if pts:
+            out.append(f'<polyline points="{pts}" fill="none" stroke="{col}" stroke-width="2"/>')
+        legend.append(f'<span class="lg"><span class="sw" style="background:{col}"></span>{_esc(name)}</span>')
+    out.append(f'<text x="{pad+pw/2}" y="{H-2}" text-anchor="middle" class="val">epoch →</text>')
+    if ylabel:
+        out.append(f'<text x="12" y="{12+ph/2}" text-anchor="middle" class="val" transform="rotate(-90 12 {12+ph/2})">{_esc(ylabel)}</text>')
+    return (f'<div class="legend">{"".join(legend)}</div>'
+            f'<svg viewBox="0 0 {W} {H}" width="100%" class="chart" role="img">{"".join(out)}</svg>')
+
+
+def render_runs_html(cmp: dict, title: str = "Training runs") -> str:
+    """Compare training runs: primary-metric curves + final table + config diff."""
+    if cmp.get("error"):
+        return _page(title, f'<section><p class="err">{_esc(cmp["error"])}</p></section>')
+    runs = cmp.get("runs", [])
+    primary = cmp.get("primary")
+    parts = []
+    if primary:
+        series = {r["name"]: r["curves"].get(primary, []) for r in runs}
+        parts.append(_section(f"{_esc(primary)} over epochs", _curve_svg(series, ylabel=primary),
+                              "best run = highest curve"))
+    # final metrics table
+    cols = [primary] + [m for m in cmp.get("metric_keys", []) if m != primary] if primary else cmp.get("metric_keys", [])
+    cols = [c for c in cols if c]
+    head = "".join(f"<th>{_esc(c.replace('metrics/',''))}</th>" for c in cols[:10])
+    rows = []
+    for r in runs:
+        cells = "".join(f'<td class="{"n" if c == primary else ""}">{_esc(r["final"].get(c, "·"))}</td>' for c in cols[:10])
+        rows.append(f'<tr><td class="k">{_esc(r["name"])}</td><td>{r["epochs"]}</td>{cells}</tr>')
+    parts.append(_section("Final metrics",
+                          f'<table class="warn"><thead><tr><th>run</th><th>epochs</th>{head}</tr></thead>'
+                          f'<tbody>{"".join(rows)}</tbody></table>'))
+    diff = cmp.get("config_diff", {})
+    if diff:
+        drows = []
+        for k, vals in diff.items():
+            cells = "".join(f'<td>{_esc(v)}</td>' for v in vals.values())
+            drows.append(f'<tr><td class="k">{_esc(k)}</td>{cells}</tr>')
+        dhead = "".join(f"<th>{_esc(n)}</th>" for n in next(iter(diff.values())).keys())
+        parts.append(_section("Config diff (only differing keys)",
+                              f'<table class="warn"><thead><tr><th>param</th>{dhead}</tr></thead>'
+                              f'<tbody>{"".join(drows)}</tbody></table>'))
+    return _page(title, "".join(parts))
+
+
+def render_drift_html(d: dict, title: str = "Drift report") -> str:
+    """Render PSI drift: signal cards + conf/boxes distribution overlays."""
+    if d.get("error"):
+        return _page(title, f'<section><p class="err">{_esc(d["error"])}</p></section>')
+    vcol = {"stable": "#50fa7b", "moderate": "#f0ad4e", "large": "#e06c75"}
+    sig = d.get("signals", {})
+    cards = [f'<div class="card" style="border-color:{vcol.get(d.get("overall_verdict"),_BORDER)}">'
+             f'<div class="num" style="color:{vcol.get(d.get("overall_verdict"))}">{_esc(d.get("overall_verdict"))}</div>'
+             f'<div class="cap">overall · max PSI {d.get("max_psi")}</div></div>']
+    for name, s in sig.items():
+        c = vcol.get(s.get("verdict"), _MUTED)
+        cards.append(f'<div class="card"><div class="num" style="color:{c}">{s.get("psi")}</div>'
+                     f'<div class="cap">{_esc(name)} · {_esc(s.get("verdict"))}</div></div>')
+    dr = d.get("detection_rate", {})
+    cards.append(f'<div class="card {"warn" if abs(dr.get("delta",0))>0.1 else ""}">'
+                 f'<div class="num">{dr.get("delta"):+}</div><div class="cap">det-rate Δ</div></div>')
+    parts = [f'<div class="cards">{"".join(cards)}</div>']
+    # confidence distribution overlay (baseline vs new)
+    conf = sig.get("confidence", {})
+    if conf.get("baseline"):
+        edges = [f"{i/10:.1f}" for i in range(len(conf["baseline"]))]
+        base = {f"{edges[i]}": round(conf["baseline"][i], 3) for i in range(len(edges))}
+        new = {f"{edges[i]}": round(conf["new"][i], 3) for i in range(len(edges))}
+        parts.append(_section("Confidence distribution — baseline", _bar_chart(base, color="#56b6c2")))
+        parts.append(_section("Confidence distribution — new data", _bar_chart(new, color="#e06c75"),
+                              f"PSI {conf.get('psi')} ({conf.get('verdict')})"))
+    return _page(title, "".join(parts))
+
+
 def render_eda_html(eda: dict, title: str = "Dataset EDA") -> str:
     if eda.get("error"):
         body = f'<section><p class="err">{_esc(eda["error"])}</p></section>'
