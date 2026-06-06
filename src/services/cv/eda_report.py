@@ -228,6 +228,30 @@ def _suspect_table(sl: dict) -> str:
     return body
 
 
+def _annotation_samples_section(samples: list, class_names=None) -> str:
+    if not samples:
+        return ""
+    tiles = []
+    for s in samples:
+        w, h = s.get("width", 1), s.get("height", 1)
+        rects = []
+        for b in s.get("boxes", []):
+            c = _BARS[b["cls"] % len(_BARS)]
+            name = class_names[b["cls"]] if class_names and b["cls"] < len(class_names) else str(b["cls"])
+            rects.append(
+                f'<rect x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="{b["h"]}" '
+                f'fill="none" stroke="{c}" stroke-width="2"/>'
+                f'<text x="{b["x"]+2}" y="{max(9,b["y"]-2)}" font-size="9" fill="{c}">{_esc(name)}</text>'
+            )
+        tiles.append(
+            f'<div class="atile"><svg viewBox="0 0 {w} {h}" class="asvg" role="img">'
+            f'<image href="{s["data_uri"]}" x="0" y="0" width="{w}" height="{h}"/>{"".join(rects)}</svg>'
+            f'<div class="acap">{_esc(s.get("name",""))} · {len(s.get("boxes",[]))} boxes</div></div>'
+        )
+    return _section("Annotation samples", f'<div class="agrid">{"".join(tiles)}</div>',
+                    "real images with their boxes drawn — eyeball label quality")
+
+
 def _image_quality_section(scan: dict) -> str:
     if not scan or scan.get("error"):
         return ""
@@ -321,6 +345,8 @@ def render_eda_html(eda: dict, title: str = "Dataset EDA") -> str:
     if cooc_data:
         parts.append(_section("Class co-occurrence", _bar_chart(cooc_data, color="#a06ae0"),
                               "classes that appear together in the same image"))
+    if eda.get("samples"):
+        parts.append(_annotation_samples_section(eda["samples"], eda.get("class_names")))
     if eda.get("image_scan"):
         parts.append(_image_quality_section(eda["image_scan"]))
     return _page(title, "".join(parts))
@@ -359,6 +385,10 @@ table.warn td {{ padding:6px 8px; border-bottom:1px solid {_BORDER}33; vertical-
 table.warn td.k {{ font-family:ui-monospace,monospace; color:{_FG}; }} table.warn td.n {{ font-weight:700; }}
 table.warn td.d {{ color:{_MUTED}; }} table.warn .ex {{ color:{_MUTED}; font-size:11px; opacity:.7; margin-top:2px; font-family:ui-monospace,monospace; }}
 .sev {{ font-weight:700; font-size:11px; letter-spacing:.04em; }}
+.agrid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }}
+.atile {{ border:1px solid {_BORDER}; border-radius:8px; overflow:hidden; background:#000; }}
+.asvg {{ display:block; width:100%; height:auto; }}
+.acap {{ font-size:10px; color:{_MUTED}; padding:4px 6px; font-family:ui-monospace,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 footer {{ color:{_MUTED}; font-size:11px; margin-top:24px; text-align:center; }}
 </style></head>
 <body><div class="wrap">

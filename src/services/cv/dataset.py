@@ -189,6 +189,69 @@ def plan_split(stems: list[str], val_frac: float = 0.2, seed: int = 0) -> dict:
     return {"train": train, "val": val, "n_train": len(train), "n_val": len(val)}
 
 
+def inspect_dataset(root: str | Path) -> dict:
+    """Auto-discover a YOLO dataset from its root: data.yaml → class names +
+    the images/labels dirs, so the UI can fill the form from one path.
+
+    Handles: a data.yaml (names list or {idx:name} dict, nc), the conventional
+    images/ + labels/ layout (with or without train/val subdirs), and a bare
+    classes.txt fallback.
+    """
+    root = Path(root)
+    if not root.exists():
+        return {"error": f"path not found: {root}"}
+
+    class_names = None
+    num_classes = None
+    yaml_path = None
+    for cand in sorted(root.glob("*.yaml")) + sorted(root.glob("*.yml")):
+        try:
+            import yaml
+            data = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        names = data.get("names")
+        if isinstance(names, dict):
+            class_names = [names[k] for k in sorted(names, key=lambda x: int(x))]
+        elif isinstance(names, list):
+            class_names = list(names)
+        if data.get("nc") is not None:
+            num_classes = int(data["nc"])
+        if class_names or num_classes:
+            yaml_path = str(cand)
+            break
+
+    if class_names is None:
+        ct = root / "classes.txt"
+        if ct.exists():
+            class_names = [ln.strip() for ln in ct.read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+    if num_classes is None and class_names:
+        num_classes = len(class_names)
+
+    # Resolve images/labels dirs by convention.
+    images_dir = next((str(root / d) for d in ("images", "imgs", "JPEGImages") if (root / d).is_dir()), "")
+    labels_dir = next((str(root / d) for d in ("labels", "annotations") if (root / d).is_dir()), "")
+    if not labels_dir and images_dir:
+        guess = images_dir.replace("images", "labels")
+        if Path(guess).is_dir():
+            labels_dir = guess
+
+    splits = []
+    if labels_dir:
+        splits = [p.name for p in Path(labels_dir).iterdir() if p.is_dir()] if Path(labels_dir).is_dir() else []
+
+    return {
+        "root": str(root),
+        "images_dir": images_dir,
+        "labels_dir": labels_dir,
+        "class_names": class_names or [],
+        "num_classes": num_classes,
+        "splits": splits,
+        "yaml": yaml_path,
+    }
+
+
 def apply_split(images_dir: str | Path, labels_dir: str | Path, out_dir: str | Path,
                 val_frac: float = 0.2, seed: int = 0, copy: bool = True) -> dict:
     """Materialize a train/val split into out_dir/{train,val}/{images,labels}."""

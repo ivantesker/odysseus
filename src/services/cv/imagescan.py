@@ -125,6 +125,62 @@ def scan_images(images_dir, *, sample: int = 400, max_side: int = 256,
     }
 
 
+def sample_annotations(images_dir, labels_dir, *, n: int = 9, max_side: int = 340) -> list:
+    """Return up to n labelled sample images for the report.
+
+    Each entry: {name, data_uri (downscaled JPEG/PNG base64), width, height,
+    boxes:[{cls, x, y, w, h}]} with box coords in DISPLAYED pixels — the report
+    overlays them as SVG <rect>s so annotation quality is visible at a glance.
+    """
+    import base64
+    import io
+
+    from .dataset import parse_label_line
+
+    root = Path(images_dir)
+    lroot = Path(labels_dir)
+    if not root.exists() or not lroot.exists():
+        return []
+    try:
+        from PIL import Image
+    except Exception:
+        return []
+
+    # Index label files by stem (recursive) so train/val both work.
+    lbl_by_stem = {p.stem: p for p in lroot.rglob("*.txt") if p.is_file()}
+    imgs = [p for p in sorted(root.rglob("*")) if p.suffix.lower() in IMAGE_EXTS and p.stem in lbl_by_stem]
+    if not imgs:
+        return []
+    step = max(1, len(imgs) // n)
+    picked = imgs[::step][:n]
+
+    out = []
+    for p in picked:
+        try:
+            with Image.open(p) as im:
+                im = im.convert("RGB")
+                w0, h0 = im.size
+                scale = max_side / max(w0, h0) if max(w0, h0) > max_side else 1.0
+                dw, dh = max(1, int(w0 * scale)), max(1, int(h0 * scale))
+                disp = im.resize((dw, dh))
+                buf = io.BytesIO()
+                disp.save(buf, format="JPEG", quality=70)
+                uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+            boxes = []
+            for raw in lbl_by_stem[p.stem].read_text(encoding="utf-8", errors="replace").splitlines():
+                pr = parse_label_line(raw.strip()) if raw.strip() else None
+                if not pr:
+                    continue
+                cls, cx, cy, bw, bh = pr
+                boxes.append({"cls": cls,
+                              "x": round((cx - bw / 2) * dw, 1), "y": round((cy - bh / 2) * dh, 1),
+                              "w": round(bw * dw, 1), "h": round(bh * dh, 1)})
+            out.append({"name": p.name, "data_uri": uri, "width": dw, "height": dh, "boxes": boxes})
+        except Exception:
+            continue
+    return out
+
+
 def _band_low(vals, pct):
     if not vals:
         return {"count": 0}

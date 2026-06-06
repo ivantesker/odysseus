@@ -49,6 +49,24 @@ def setup_cv_routes() -> APIRouter:
             copy=bool(body.get("copy", True)),
         )
 
+    @router.post("/api/cv/inspect")
+    def cv_inspect(request: Request, body: dict = Body(...)):
+        """Auto-discover a dataset from its root (data.yaml → dirs + classes)."""
+        require_admin(request)
+        root = (body.get("root") or "").strip()
+        if not root:
+            raise HTTPException(400, "root is required")
+        result = ds.inspect_dataset(root)
+        if result.get("error"):
+            raise HTTPException(400, result["error"])
+        return result
+
+    @router.get("/api/cv/reports")
+    def cv_reports(request: Request):
+        """List previously generated CV reports (owner-scoped)."""
+        require_admin(request)
+        return {"reports": report_store.list_reports(owner=get_current_user(request))}
+
     @router.post("/api/cv/eda")
     def cv_eda_report(request: Request, body: dict = Body(...)):
         """Compute dataset EDA, render an HTML report, store it, return its URL."""
@@ -66,6 +84,13 @@ def setup_cv_routes() -> APIRouter:
         )
         if result.get("error"):
             raise HTTPException(400, result["error"])
+        # Annotation samples (real images with boxes drawn) — on by default when
+        # an images dir is given, since "show me the labels" is the first thing
+        # anyone wants. Cheap (decodes only ~9 images).
+        if images_dir and body.get("samples", True):
+            from src.services.cv import imagescan
+            result["samples"] = imagescan.sample_annotations(
+                images_dir, labels_dir, n=int(body.get("n_samples", 9)))
         # Optional (slower) image-pixel scan: brightness/blur/entropy/dups.
         if body.get("image_scan") and images_dir:
             from src.services.cv import imagescan

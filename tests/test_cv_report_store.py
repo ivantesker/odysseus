@@ -21,3 +21,15 @@ def test_load_unknown_or_bad_id():
     assert rs.load_report("cv-deadbeef0000", owner=None) is None
     assert rs.load_report("../etc/passwd", owner=None) is None      # traversal-safe
     assert rs.load_report("not-an-id", owner=None) is None
+
+
+def test_list_reports_owner_scoped_and_sorted():
+    a = rs.save_report("<html>a</html>", owner="lister", meta={"title": "A"})
+    b = rs.save_report("<html>b</html>", owner="lister", meta={"title": "B"})
+    rs.save_report("<html>x</html>", owner="someone_else", meta={"title": "X"})
+    mine = rs.list_reports(owner="lister")
+    ids = {r["id"] for r in mine}
+    assert a in ids and b in ids
+    assert all(r["title"] and r["url"].startswith("/api/cv/report/") for r in mine)
+    # other owner's report not listed for this owner
+    assert all("someone_else" not in r.get("id", "") for r in mine)

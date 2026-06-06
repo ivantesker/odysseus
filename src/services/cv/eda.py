@@ -158,6 +158,7 @@ def compute_eda(labels_dir, images_dir=None, class_names=None, num_classes=None,
     per_class_named = {_cls_name(c, class_names): n for c, n in sorted(per_class.items(), key=lambda kv: -kv[1])}
     out = {
         "summary": summary,
+        "class_names": list(class_names) if class_names else None,
         "per_class": per_class_named,
         "boxes_per_image_hist": _histogram(bpi, max_bins=12),
         "area_buckets": {k: area_buckets.get(k, 0) for k, _ in _AREA_BUCKETS},

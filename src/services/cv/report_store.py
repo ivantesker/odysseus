@@ -46,6 +46,35 @@ def save_report(html: str, *, owner: str | None, meta: dict | None = None) -> st
     return report_id
 
 
+def list_reports(*, owner: str | None, limit: int = 50) -> list:
+    """List stored reports the owner may see, newest first."""
+    base = _reports_dir()
+    out = []
+    for jp in os.listdir(base):
+        if not jp.endswith(".json"):
+            continue
+        path = os.path.join(base, jp)
+        try:
+            with open(path, encoding="utf-8") as f:
+                sc = json.load(f)
+        except Exception:
+            continue
+        rep_owner = sc.get("owner") or ""
+        if rep_owner and owner and rep_owner != owner:
+            continue
+        if rep_owner and not owner:
+            continue
+        rid = sc.get("id") or jp[:-5]
+        out.append({
+            "id": rid,
+            "title": sc.get("title") or rid,
+            "url": f"/api/cv/report/{rid}",
+            "mtime": os.path.getmtime(path),
+        })
+    out.sort(key=lambda r: -r["mtime"])
+    return out[:limit]
+
+
 def load_report(report_id: str, *, owner: str | None) -> str | None:
     """Return the report HTML if it exists and the owner matches, else None.
 

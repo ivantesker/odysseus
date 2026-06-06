@@ -30,6 +30,10 @@ function _field(label, id, value, ph) {
 // Example values match a RiderDome-style YOLO project (Front/Back/Side @256).
 const _TABS = {
   dataset: () => `
+    <div class="cv-inspect">
+      ${_field('dataset root (auto-fills from data.yaml)', 'cv-ds-root', _recall('root'), 'D:/rider_dome/yolo_dataset')}
+      <button class="cv-load" data-action="inspect">Load ↻</button>
+    </div>
     <div class="cv-row">
       <select id="cv-ds-action">
         <option value="eda">eda — full visual report ↗</option>
@@ -75,8 +79,35 @@ const _TABS = {
     <p class="cv-hint">onnx/rknn steps need <code>ultralytics, onnx, rknn-toolkit2</code></p>`,
 };
 
+function _injectStyles() {
+  if (document.getElementById('cv-styles')) return;
+  const s = document.createElement('style');
+  s.id = 'cv-styles';
+  s.textContent = `
+  #cv-modal .cv-tabs{display:flex;gap:4px;padding:8px 14px 0;border-bottom:1px solid var(--border,#355a66)}
+  #cv-modal .cv-tab{background:none;border:none;border-bottom:2px solid transparent;color:var(--color-muted,#888);padding:8px 12px;cursor:pointer;font-size:13px}
+  #cv-modal .cv-tab.active{color:var(--fg,#9cdef2);border-bottom-color:var(--accent,#e06c75)}
+  #cv-modal .cv-tag{font-size:10px;color:var(--color-muted,#888);border:1px solid var(--border,#355a66);border-radius:8px;padding:1px 6px;margin-left:6px}
+  #cv-modal .cv-field{display:flex;flex-direction:column;gap:3px;margin:8px 0;font-size:12px;flex:1}
+  #cv-modal .cv-field span{color:var(--color-muted,#888)}
+  #cv-modal .cv-field input,#cv-modal select{background:var(--panel,#111);border:1px solid var(--border,#355a66);border-radius:6px;color:var(--fg,#9cdef2);padding:7px 9px;font-size:12px;font-family:ui-monospace,monospace;width:100%}
+  #cv-modal .cv-row{display:flex;gap:10px}
+  #cv-modal .cv-inspect{display:flex;gap:8px;align-items:flex-end;margin-bottom:6px}
+  #cv-modal .cv-load,#cv-modal .cv-run{background:var(--accent,#e06c75);color:#111;border:none;border-radius:7px;padding:9px 14px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap}
+  #cv-modal .cv-load{align-self:flex-end;margin-bottom:8px;background:var(--hl-function,#61afef)}
+  #cv-modal .cv-run{margin-top:10px;width:100%}
+  #cv-modal .cv-chk{display:flex;gap:7px;align-items:center;font-size:12px;color:var(--color-muted,#888);margin:8px 0}
+  #cv-modal .cv-hint{font-size:11px;color:var(--color-muted,#888);margin:4px 0 8px}
+  #cv-modal .cv-report-link{display:inline-block;background:var(--accent,#e06c75);color:#111;border-radius:7px;padding:8px 12px;text-decoration:none;font-weight:600;margin:10px 0 8px}
+  #cv-modal .cv-report-frame{width:100%;height:60vh;border:1px solid var(--border,#355a66);border-radius:8px;background:#282c34;display:block}
+  #cv-modal .cv-out{background:var(--panel,#111);border:1px solid var(--border,#355a66);border-radius:8px;padding:10px;font-size:11px;color:var(--color-muted,#888);max-height:240px;overflow:auto;white-space:pre-wrap;margin-top:10px}
+  #cv-modal .cv-out.cv-err{color:var(--red,#e06c75);border-color:var(--red,#e06c75)}`;
+  document.head.appendChild(s);
+}
+
 function _getModal() {
   if (_modal) return _modal;
+  _injectStyles();
   _modal = document.createElement('div');
   _modal.id = 'cv-modal';
   _modal.className = 'modal';
@@ -105,8 +136,10 @@ function _getModal() {
     t.addEventListener('click', () => _showTab(t.dataset.tab));
   });
   _modal.querySelector('#cv-form').addEventListener('click', (e) => {
-    const btn = e.target.closest('.cv-run');
-    if (btn) _run(btn.dataset.action);
+    const run = e.target.closest('.cv-run');
+    if (run) { _run(run.dataset.action); return; }
+    const load = e.target.closest('.cv-load');
+    if (load) _inspect();
   });
   _showTab('dataset');
   return _modal;
@@ -121,22 +154,41 @@ function _showTab(name) {
 }
 
 function _val(id) { return (_modal.querySelector('#' + id)?.value || '').trim(); }
+function _set(id, v) { const el = _modal.querySelector('#' + id); if (el && v != null) el.value = v; }
+function _recall(key) { try { return localStorage.getItem('cv:' + key) || ''; } catch { return ''; } }
+function _remember(key, v) { try { if (v) localStorage.setItem('cv:' + key, v); } catch {} }
+
+async function _inspect() {
+  const root = _val('cv-ds-root');
+  const out = _modal.querySelector('#cv-out');
+  if (!root) { out.hidden = false; out.classList.add('cv-err'); out.textContent = 'Enter a dataset root path.'; return; }
+  out.hidden = false; out.classList.remove('cv-err'); out.textContent = 'Inspecting…';
+  try {
+    const d = await _post('/api/cv/inspect', { root });
+    _set('cv-ds-labels', d.labels_dir);
+    _set('cv-ds-images', d.images_dir);
+    if (d.num_classes != null) _set('cv-ds-nc', d.num_classes);
+    if (d.class_names && d.class_names.length) _set('cv-ds-names', d.class_names.join(','));
+    _remember('root', root);
+    out.textContent = `Loaded: ${d.class_names?.length || 0} classes${d.yaml ? ' from ' + d.yaml.split(/[\\/]/).pop() : ''}` +
+      (d.splits?.length ? `, splits: ${d.splits.join(', ')}` : '');
+  } catch (e) {
+    out.classList.add('cv-err'); out.textContent = 'Inspect failed: ' + e.message;
+  }
+}
 
 function _render(out, data) {
   out.hidden = false;
   out.classList.remove('cv-err');
-  // A generated report → show a prominent open-in-new-tab link above the JSON.
-  let link = _modal.querySelector('#cv-report-link');
-  if (link) link.remove();
+  // A generated report → inline preview (iframe) + open-in-new-tab link.
+  _modal.querySelector('#cv-report-wrap')?.remove();
   if (data && data.report_url) {
-    link = document.createElement('a');
-    link.id = 'cv-report-link';
-    link.className = 'cv-report-link';
-    link.href = data.report_url;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    link.textContent = '📊 Open EDA report ↗';
-    out.parentNode.insertBefore(link, out);
+    const wrap = document.createElement('div');
+    wrap.id = 'cv-report-wrap';
+    wrap.innerHTML =
+      `<a class="cv-report-link" href="${data.report_url}" target="_blank" rel="noopener">📊 Open report in new tab ↗</a>`
+      + `<iframe class="cv-report-frame" src="${data.report_url}" title="report"></iframe>`;
+    out.parentNode.insertBefore(wrap, out);
   }
   out.textContent = JSON.stringify(data, null, 2);
 }

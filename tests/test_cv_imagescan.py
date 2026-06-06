@@ -47,6 +47,27 @@ def test_scan_sampling_caps_count(tmp_path):
     assert r["scanned"] <= 5
 
 
+def test_sample_annotations(tmp_path):
+    img = tmp_path / "images"; lbl = tmp_path / "labels"
+    img.mkdir(); lbl.mkdir()
+    rng = np.random.RandomState(0)
+    for i in range(6):
+        _img(img / f"{i}.png", rng.randint(0, 255, (80, 100, 3)))
+        (lbl / f"{i}.txt").write_text("0 0.5 0.5 0.4 0.4\n1 0.2 0.2 0.1 0.1\n")
+    samples = imagescan.sample_annotations(str(img), str(lbl), n=4)
+    assert 1 <= len(samples) <= 4
+    s = samples[0]
+    assert s["data_uri"].startswith("data:image/jpeg;base64,")
+    assert s["width"] > 0 and s["height"] > 0
+    assert len(s["boxes"]) == 2
+    b = s["boxes"][0]
+    assert all(k in b for k in ("cls", "x", "y", "w", "h"))
+
+
+def test_sample_annotations_missing_dir():
+    assert imagescan.sample_annotations("/no/img", "/no/lbl") == []
+
+
 def test_laplacian_and_entropy_pure():
     flat = np.full((20, 20), 100.0)
     noisy = np.random.RandomState(0).rand(20, 20) * 255

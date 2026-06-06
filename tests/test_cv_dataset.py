@@ -75,6 +75,35 @@ def test_plan_split_deterministic():
     assert not (set(a["train"]) & set(a["val"]))  # disjoint
 
 
+def test_inspect_dataset_from_yaml(tmp_path):
+    (tmp_path / "images").mkdir()
+    (tmp_path / "labels").mkdir()
+    (tmp_path / "labels" / "train").mkdir()
+    (tmp_path / "labels" / "val").mkdir()
+    (tmp_path / "data.yaml").write_text(
+        "path: .\ntrain: images/train\nval: images/val\nnc: 3\nnames: ['Front', 'Back', 'Side']\n")
+    d = ds.inspect_dataset(str(tmp_path))
+    assert d["class_names"] == ["Front", "Back", "Side"]
+    assert d["num_classes"] == 3
+    assert d["labels_dir"].endswith("labels")
+    assert d["images_dir"].endswith("images")
+    assert set(d["splits"]) == {"train", "val"}
+
+
+def test_inspect_dataset_names_dict_and_classes_txt(tmp_path):
+    (tmp_path / "images").mkdir(); (tmp_path / "labels").mkdir()
+    (tmp_path / "data.yaml").write_text("names:\n  0: car\n  1: truck\n")
+    assert ds.inspect_dataset(str(tmp_path))["class_names"] == ["car", "truck"]
+    # classes.txt fallback (no yaml)
+    p2 = tmp_path / "ds2"; (p2 / "images").mkdir(parents=True); (p2 / "labels").mkdir()
+    (p2 / "classes.txt").write_text("person\nbike\n")
+    assert ds.inspect_dataset(str(p2))["class_names"] == ["person", "bike"]
+
+
+def test_inspect_dataset_missing():
+    assert "error" in ds.inspect_dataset("/no/such/root")
+
+
 def test_apply_split_materializes(tmp_path):
     img = tmp_path / "images"; lbl = tmp_path / "labels"; out = tmp_path / "out"
     img.mkdir(); lbl.mkdir()

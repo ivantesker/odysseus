@@ -117,6 +117,28 @@ def test_review_route_requires_dirs(client):
     assert client.post("/api/cv/review", json={"labels_dir": "x"}).status_code == 400
 
 
+def test_inspect_route(client, tmp_path):
+    (tmp_path / "images").mkdir(); (tmp_path / "labels").mkdir()
+    (tmp_path / "data.yaml").write_text("nc: 2\nnames: ['a', 'b']\n")
+    r = client.post("/api/cv/inspect", json={"root": str(tmp_path)})
+    assert r.status_code == 200
+    assert r.json()["class_names"] == ["a", "b"]
+
+
+def test_inspect_route_requires_root(client):
+    assert client.post("/api/cv/inspect", json={}).status_code == 400
+
+
+def test_reports_list_route(client, tmp_path):
+    lbl = tmp_path / "labels"; lbl.mkdir()
+    (lbl / "a.txt").write_text("0 .5 .5 .2 .2\n")
+    gen = client.post("/api/cv/eda", json={"labels_dir": str(lbl), "title": "ListMe"})
+    rid = gen.json()["report_id"]
+    lst = client.get("/api/cv/reports")
+    assert lst.status_code == 200
+    assert any(r["id"] == rid for r in lst.json()["reports"])
+
+
 def test_eval_route_graceful_without_stack(client):
     # No ultralytics in the app env → 200 with an error payload, not a 500.
     r = client.post("/api/cv/eval", json={"model": "x.pt", "data": "d.yaml"})
