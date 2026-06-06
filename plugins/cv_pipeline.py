@@ -154,13 +154,25 @@ def review_labels(args, ctx=None):
         review["compare"] = rv.compare_models(labels_dir, preds_dir, args["preds_b_dir"], iou_thr=iou, class_names=names)
     title = (args.get("title") or "Model review").strip()
     html = eda_report.render_review_html(review, title)
-    rid = report_store.save_report(html, owner=(ctx or {}).get("owner"), meta={"title": title})
+    owner = (ctx or {}).get("owner")
+    rid = report_store.save_report(html, owner=owner, meta={"title": title})
+    # Memory write-back: per-class recommended thresholds + mAP, so the agent can
+    # cite them next time ("last review suggested conf 0.48 for class X").
+    from src.services.cv import cv_memory
+    rec = review.get("pr", {}).get("recommended_conf", {})
+    if rec:
+        cv_memory.remember_cv(
+            f"Review of {labels_dir}: mAP={review['pr'].get('map')}, "
+            f"recommended per-class conf (max-F1)={rec}, "
+            f"suspects={review['suspect_labels']['counts']}",
+            owner=owner, category="project")
     return {
         "action": "review",
         "report_id": rid,
         "report_url": f"/api/cv/report/{rid}",
         "suspect_total": review["suspect_labels"]["total"],
         "suspect_counts": review["suspect_labels"]["counts"],
+        "recommended_conf": rec,
         "exit_code": 0,
     }
 
@@ -207,10 +219,21 @@ def deploy_config(args, ctx=None):
                           max_batch_size=int(args.get("max_batch_size", 1)))
     merged = {**ds_cfg, "config_pbtxt": tr.get("config_pbtxt")}
     html = eda_report.render_deploy_html(merged, args.get("title") or "Edge deploy")
-    rid = report_store.save_report(html, owner=(ctx or {}).get("owner"), meta={"title": "Edge deploy"})
+    owner = (ctx or {}).get("owner")
+    rid = report_store.save_report(html, owner=owner, meta={"title": "Edge deploy"})
+    # Memory write-back + device-constraint guard (best-effort).
+    from src.services.cv import cv_memory
+    hw = ds_cfg.get("input_hw")
+    size = (ds_cfg.get("io") or {}).get("size_mb")
+    cv_memory.remember_cv(
+        f"Edge deploy: {onnx} → {hw} input, {size}MB, mode={args.get('network_mode', 2)} "
+        f"(0=FP32 1=INT8 2=FP16), outputs={[o['name'] for o in ds_cfg['io']['outputs']]}",
+        owner=owner, category="project")
+    guard = cv_memory.device_constraints(str(args.get("target") or args.get("device") or "rk3588"), owner=owner)
     return {"action": "deploy", "report_id": rid, "report_url": f"/api/cv/report/{rid}",
-            "input_hw": ds_cfg.get("input_hw"),
-            "outputs": [o["name"] for o in ds_cfg["io"]["outputs"]], "exit_code": 0}
+            "input_hw": hw, "size_mb": size,
+            "outputs": [o["name"] for o in ds_cfg["io"]["outputs"]],
+            "device_notes": guard, "exit_code": 0}
 
 
 # ── convert_dataset ───────────────────────────────────────────────────────────
