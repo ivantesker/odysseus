@@ -69,6 +69,54 @@ def test_dataset_split_route(client, tmp_path):
     assert body["train"] + body["val"] == 6
 
 
+def test_eda_route_generates_report_and_serves_it(client, tmp_path):
+    lbl = tmp_path / "labels"
+    lbl.mkdir()
+    (lbl / "a.txt").write_text("0 .5 .5 .2 .2\n1 .3 .3 .1 .1\n")
+    (lbl / "b.txt").write_text("0 .4 .4 .2 .2\n")
+    # generate
+    r = client.post("/api/cv/eda", json={"labels_dir": str(lbl),
+                                          "class_names": ["Front", "Back"], "title": "Demo"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["report_id"].startswith("cv-")
+    assert body["report_url"] == f"/api/cv/report/{body['report_id']}"
+    assert body["summary"]["boxes"] == 3
+    # serve the generated report HTML
+    page = client.get(body["report_url"])
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+    assert "Demo" in page.text and "<svg" in page.text
+
+
+def test_eda_route_requires_labels_dir(client):
+    assert client.post("/api/cv/eda", json={}).status_code == 400
+
+
+def test_report_route_404_for_unknown(client):
+    assert client.get("/api/cv/report/cv-000000000000").status_code == 404
+
+
+def test_review_route_generates_report(client, tmp_path):
+    gt = tmp_path / "gt"; pa = tmp_path / "pa"
+    gt.mkdir(); pa.mkdir()
+    for i in range(4):
+        (gt / f"{i}.txt").write_text("0 0.5 0.5 0.2 0.2\n1 0.2 0.2 0.1 0.1\n")
+        (pa / f"{i}.txt").write_text("0 0.5 0.5 0.2 0.2 0.9\n1 0.2 0.2 0.1 0.1 0.8\n")
+    r = client.post("/api/cv/review", json={
+        "labels_dir": str(gt), "preds_dir": str(pa), "class_names": ["car", "truck"]})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["report_id"].startswith("cv-")
+    page = client.get(body["report_url"])
+    assert page.status_code == 200
+    assert "Confusion matrix" in page.text
+
+
+def test_review_route_requires_dirs(client):
+    assert client.post("/api/cv/review", json={"labels_dir": "x"}).status_code == 400
+
+
 def test_eval_route_graceful_without_stack(client):
     # No ultralytics in the app env → 200 with an error payload, not a 500.
     r = client.post("/api/cv/eval", json={"model": "x.pt", "data": "d.yaml"})

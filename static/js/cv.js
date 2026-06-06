@@ -32,6 +32,7 @@ const _TABS = {
   dataset: () => `
     <div class="cv-row">
       <select id="cv-ds-action">
+        <option value="eda">eda — full visual report ↗</option>
         <option value="lint">lint — find bad/empty labels</option>
         <option value="stats">stats — class balance + orphans</option>
         <option value="split">split — deterministic train/val</option>
@@ -45,7 +46,15 @@ const _TABS = {
       ${_field('class_names', 'cv-ds-names', 'Front,Back,Side', 'Front,Back,Side')}
       ${_field('val_frac', 'cv-ds-val', '0.2', '0.2')}
     </div>
+    <label class="cv-chk"><input type="checkbox" id="cv-ds-scan"> image-quality scan (brightness/blur/dups — slower, decodes images)</label>
     <button class="cv-run" data-action="dataset">Run dataset tool</button>`,
+  review: () => `
+    <p class="cv-hint">Compare model predictions against ground-truth labels (YOLO .txt, preds add a conf column). Generates a QA report: suspect labels, confusion matrix, A/B model diff.</p>
+    ${_field('ground-truth labels dir', 'cv-rv-gt', '', 'D:/rider_dome/yolo_dataset/labels')}
+    ${_field('predictions dir (model A)', 'cv-rv-pa', '', 'D:/rider_dome/preds_pt')}
+    ${_field('predictions dir (model B, optional)', 'cv-rv-pb', '', 'D:/rider_dome/preds_rknn_int8')}
+    <div class="cv-row">${_field('class_names', 'cv-rv-names', 'Front,Back,Side', '')}${_field('iou', 'cv-rv-iou', '0.5', '0.5')}</div>
+    <button class="cv-run" data-action="review">Run review ↗</button>`,
   eval: () => `
     ${_field('model (.pt/.onnx)', 'cv-ev-model', '', 'D:/rider_dome/yolov10_training/.../best.pt')}
     ${_field('data (yaml or images)', 'cv-ev-data', '', 'D:/rider_dome/yolo_dataset/data.yaml')}
@@ -80,6 +89,7 @@ function _getModal() {
       </div>
       <div class="cv-tabs">
         <button class="cv-tab active" data-tab="dataset">Dataset</button>
+        <button class="cv-tab" data-tab="review">Review / QA</button>
         <button class="cv-tab" data-tab="eval">Eval / bench</button>
         <button class="cv-tab" data-tab="convert">Convert</button>
       </div>
@@ -115,6 +125,19 @@ function _val(id) { return (_modal.querySelector('#' + id)?.value || '').trim();
 function _render(out, data) {
   out.hidden = false;
   out.classList.remove('cv-err');
+  // A generated report → show a prominent open-in-new-tab link above the JSON.
+  let link = _modal.querySelector('#cv-report-link');
+  if (link) link.remove();
+  if (data && data.report_url) {
+    link = document.createElement('a');
+    link.id = 'cv-report-link';
+    link.className = 'cv-report-link';
+    link.href = data.report_url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = '📊 Open EDA report ↗';
+    out.parentNode.insertBefore(link, out);
+  }
   out.textContent = JSON.stringify(data, null, 2);
 }
 
@@ -134,8 +157,19 @@ async function _run(action) {
         num_classes: _val('cv-ds-nc') ? parseInt(_val('cv-ds-nc'), 10) : null,
         class_names: names ? names.split(',').map(s => s.trim()).filter(Boolean) : null,
         val_frac: parseFloat(_val('cv-ds-val') || '0.2'),
+        image_scan: _modal.querySelector('#cv-ds-scan')?.checked || false,
       };
-      data = await _post(`/api/cv/dataset/${act}`, payload);
+      // 'eda' has its own endpoint that returns a report URL; others post to /dataset/<act>.
+      data = await _post(act === 'eda' ? '/api/cv/eda' : `/api/cv/dataset/${act}`, payload);
+    } else if (action === 'review') {
+      const names = _val('cv-rv-names');
+      data = await _post('/api/cv/review', {
+        labels_dir: _val('cv-rv-gt'),
+        preds_dir: _val('cv-rv-pa'),
+        preds_b_dir: _val('cv-rv-pb'),
+        class_names: names ? names.split(',').map(s => s.trim()).filter(Boolean) : null,
+        iou: parseFloat(_val('cv-rv-iou') || '0.5'),
+      });
     } else if (action === 'eval') {
       data = await _post('/api/cv/eval', {
         model: _val('cv-ev-model'), data: _val('cv-ev-data'),

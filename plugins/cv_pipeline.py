@@ -24,13 +24,14 @@ from src.services.cv import dataset as ds
     admin=True,
     description=(
         "Inspect/clean a YOLO-format dataset: lint labels (malformed/out-of-bounds/"
-        "bad class id), class-balance stats, or a deterministic train/val split."
+        "bad class id), class-balance stats, a deterministic train/val split, or a "
+        "full visual EDA report (returns a URL)."
     ),
-    keywords=["dataset", "yolo", "labels", "annotation", "lint", "split", "class balance"],
+    keywords=["dataset", "yolo", "labels", "annotation", "lint", "split", "class balance", "eda", "report"],
     schema={
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["lint", "stats", "split"]},
+            "action": {"type": "string", "enum": ["lint", "stats", "split", "eda"]},
             "labels_dir": {"type": "string"},
             "images_dir": {"type": "string"},
             "out_dir": {"type": "string", "description": "for action=split"},
@@ -72,7 +73,86 @@ def dataset_tools(args, ctx=None):
             seed=int(args.get("seed", 0)),
             copy=bool(args.get("copy", True)),
         )}
-    return {"error": f"unknown action {action!r}; use lint|stats|split", "exit_code": 1}
+    if action == "eda":
+        if not args.get("labels_dir"):
+            return {"error": "eda needs labels_dir", "exit_code": 1}
+        from src.services.cv import eda as cv_eda
+        from src.services.cv import eda_report, report_store
+        result = cv_eda.compute_eda(
+            args["labels_dir"], images_dir=args.get("images_dir") or None,
+            class_names=args.get("class_names"),
+        )
+        if result.get("error"):
+            return {"error": result["error"], "exit_code": 1}
+        title = (args.get("title") or "Dataset EDA").strip()
+        html = eda_report.render_eda_html(result, title)
+        owner = (ctx or {}).get("owner")
+        rid = report_store.save_report(html, owner=owner, meta={"title": title})
+        return {
+            "action": "eda",
+            "report_id": rid,
+            "report_url": f"/api/cv/report/{rid}",
+            "summary": result.get("summary", {}),
+            "exit_code": 0,
+        }
+    return {"error": f"unknown action {action!r}; use lint|stats|split|eda", "exit_code": 1}
+
+
+# ── review_labels ─────────────────────────────────────────────────────────────
+
+@register_tool(
+    "review_labels",
+    admin=True,
+    description=(
+        "Review annotations against model predictions: rank suspect labels "
+        "(missing/spurious/mismatch), build a confusion matrix, and optionally "
+        "diff two models (PT vs quantized). Returns a report URL."
+    ),
+    keywords=["review", "qa", "mistake", "confusion", "annotation", "label error", "compare", "quantize", "regression"],
+    schema={
+        "type": "object",
+        "properties": {
+            "labels_dir": {"type": "string", "description": "ground-truth YOLO labels"},
+            "preds_dir": {"type": "string", "description": "model predictions (<cls> cx cy w h conf)"},
+            "preds_b_dir": {"type": "string", "description": "optional 2nd model for A/B diff"},
+            "class_names": {"type": "array", "items": {"type": "string"}},
+            "iou": {"type": "number", "default": 0.5},
+        },
+        "required": ["labels_dir", "preds_dir"],
+    },
+    fenced_help=(
+        "Review labels vs predictions → suspect labels + confusion matrix (+ A/B diff).\n"
+        "```review_labels\n"
+        '{"labels_dir": "D:/ds/labels", "preds_dir": "D:/ds/preds", "class_names": ["Front","Back","Side"]}\n'
+        "```"
+    ),
+)
+def review_labels(args, ctx=None):
+    labels_dir = (args.get("labels_dir") or "").strip()
+    preds_dir = (args.get("preds_dir") or "").strip()
+    if not labels_dir or not preds_dir:
+        return {"error": "review_labels needs labels_dir and preds_dir", "exit_code": 1}
+    from src.services.cv import eda_report, report_store
+    from src.services.cv import review as rv
+    iou = float(args.get("iou", 0.5))
+    names = args.get("class_names")
+    review = {
+        "suspect_labels": rv.suspect_labels(labels_dir, preds_dir, iou_thr=iou),
+        "confusion_matrix": rv.confusion_matrix(labels_dir, preds_dir, iou_thr=iou, class_names=names),
+    }
+    if (args.get("preds_b_dir") or "").strip():
+        review["compare"] = rv.compare_models(labels_dir, preds_dir, args["preds_b_dir"], iou_thr=iou, class_names=names)
+    title = (args.get("title") or "Model review").strip()
+    html = eda_report.render_review_html(review, title)
+    rid = report_store.save_report(html, owner=(ctx or {}).get("owner"), meta={"title": title})
+    return {
+        "action": "review",
+        "report_id": rid,
+        "report_url": f"/api/cv/report/{rid}",
+        "suspect_total": review["suspect_labels"]["total"],
+        "suspect_counts": review["suspect_labels"]["counts"],
+        "exit_code": 0,
+    }
 
 
 # ── eval_detector ─────────────────────────────────────────────────────────────
