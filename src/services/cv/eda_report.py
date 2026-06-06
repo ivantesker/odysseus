@@ -228,28 +228,66 @@ def _suspect_table(sl: dict) -> str:
     return body
 
 
-def _annotation_samples_section(samples: list, class_names=None) -> str:
+def _class_color(cls: int) -> str:
+    return _BARS[cls % len(_BARS)]
+
+
+def _class_legend(per_class: dict, class_names=None) -> str:
+    """Roboflow-style colour legend: a chip per class with its colour + count.
+
+    Colours match the boxes drawn in the gallery (indexed by class id), so a
+    class reads as the same hue in the legend, the bars, and the overlays.
+    """
+    if not per_class:
+        return ""
+    # Map display-name → class index to keep colours consistent with overlays.
+    name_to_idx = {}
+    if class_names:
+        name_to_idx = {n: i for i, n in enumerate(class_names)}
+    chips = []
+    for name, cnt in per_class.items():
+        idx = name_to_idx.get(name)
+        if idx is None:
+            try:
+                idx = int(name)
+            except (TypeError, ValueError):
+                idx = abs(hash(name)) % len(_BARS)
+        c = _class_color(idx)
+        chips.append(f'<span class="lg"><span class="sw" style="background:{c}"></span>{_esc(name)}'
+                     f'<span class="cnt">{_esc(cnt)}</span></span>')
+    return f'<div class="legend">{"".join(chips)}</div>'
+
+
+def _annotation_samples_section(samples: list, class_names=None, per_class=None) -> str:
     if not samples:
         return ""
+    legend = _class_legend(per_class or {}, class_names)
     tiles = []
     for s in samples:
         w, h = s.get("width", 1), s.get("height", 1)
-        rects = []
+        sw = max(2.0, round(max(w, h) / 150, 1))  # stroke scales with image size → always visible
+        chip_h = max(11, int(max(w, h) / 26))
+        overlay = []
         for b in s.get("boxes", []):
-            c = _BARS[b["cls"] % len(_BARS)]
+            c = _class_color(b["cls"])
             name = class_names[b["cls"]] if class_names and b["cls"] < len(class_names) else str(b["cls"])
-            rects.append(
+            cw = max(18, len(name) * chip_h * 0.55)
+            ty = b["y"] if b["y"] > chip_h else b["y"] + b["h"]
+            overlay.append(
                 f'<rect x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="{b["h"]}" '
-                f'fill="none" stroke="{c}" stroke-width="2"/>'
-                f'<text x="{b["x"]+2}" y="{max(9,b["y"]-2)}" font-size="9" fill="{c}">{_esc(name)}</text>'
+                f'fill="{c}" fill-opacity="0.10" stroke="{c}" stroke-width="{sw}"/>'
+                f'<rect x="{b["x"]}" y="{ty-chip_h}" width="{cw}" height="{chip_h}" fill="{c}"/>'
+                f'<text x="{b["x"]+3}" y="{ty-chip_h*0.25}" font-size="{int(chip_h*0.72)}" '
+                f'font-weight="700" fill="#0e0f13">{_esc(name)}</text>'
             )
         tiles.append(
-            f'<div class="atile"><svg viewBox="0 0 {w} {h}" class="asvg" role="img">'
-            f'<image href="{s["data_uri"]}" x="0" y="0" width="{w}" height="{h}"/>{"".join(rects)}</svg>'
+            f'<div class="atile"><svg viewBox="0 0 {w} {h}" class="asvg" role="img" preserveAspectRatio="xMidYMid meet">'
+            f'<image href="{s["data_uri"]}" x="0" y="0" width="{w}" height="{h}"/>{"".join(overlay)}</svg>'
             f'<div class="acap">{_esc(s.get("name",""))} · {len(s.get("boxes",[]))} boxes</div></div>'
         )
-    return _section("Annotation samples", f'<div class="agrid">{"".join(tiles)}</div>',
-                    "real images with their boxes drawn — eyeball label quality")
+    body = legend + f'<div class="agrid">{"".join(tiles)}</div>'
+    return _section("Annotation gallery", body,
+                    "real images with boxes drawn — eyeball label quality (like Roboflow / Ultralytics HUB)")
 
 
 def _image_quality_section(scan: dict) -> str:
@@ -330,6 +368,11 @@ def render_eda_html(eda: dict, title: str = "Dataset EDA") -> str:
         _health_badge(eda.get("health_score", {})),
         _stat_cards(summary),
         _recommendations(eda.get("recommendations", [])),
+    ]
+    # Annotation gallery is the hero — show the labels first, Roboflow-style.
+    if eda.get("samples"):
+        parts.append(_annotation_samples_section(eda["samples"], eda.get("class_names"), eda.get("per_class")))
+    parts += [
         _section("Health check", health_html),
         _warnings_section(eda.get("warnings", {})),
         _section("Class distribution", _bar_chart(eda.get("per_class", {})),
@@ -345,8 +388,6 @@ def render_eda_html(eda: dict, title: str = "Dataset EDA") -> str:
     if cooc_data:
         parts.append(_section("Class co-occurrence", _bar_chart(cooc_data, color="#a06ae0"),
                               "classes that appear together in the same image"))
-    if eda.get("samples"):
-        parts.append(_annotation_samples_section(eda["samples"], eda.get("class_names")))
     if eda.get("image_scan"):
         parts.append(_image_quality_section(eda["image_scan"]))
     return _page(title, "".join(parts))
@@ -385,10 +426,15 @@ table.warn td {{ padding:6px 8px; border-bottom:1px solid {_BORDER}33; vertical-
 table.warn td.k {{ font-family:ui-monospace,monospace; color:{_FG}; }} table.warn td.n {{ font-weight:700; }}
 table.warn td.d {{ color:{_MUTED}; }} table.warn .ex {{ color:{_MUTED}; font-size:11px; opacity:.7; margin-top:2px; font-family:ui-monospace,monospace; }}
 .sev {{ font-weight:700; font-size:11px; letter-spacing:.04em; }}
-.agrid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; }}
-.atile {{ border:1px solid {_BORDER}; border-radius:8px; overflow:hidden; background:#000; }}
+.legend {{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }}
+.legend .lg {{ display:inline-flex; align-items:center; gap:6px; background:{_BG}; border:1px solid {_BORDER}; border-radius:20px; padding:3px 10px 3px 6px; font-size:12px; }}
+.legend .sw {{ width:12px; height:12px; border-radius:3px; display:inline-block; }}
+.legend .cnt {{ color:{_MUTED}; font-size:11px; margin-left:2px; }}
+.agrid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }}
+.atile {{ border:1px solid {_BORDER}; border-radius:10px; overflow:hidden; background:#000; transition:transform .12s, box-shadow .12s; }}
+.atile:hover {{ transform:translateY(-2px); box-shadow:0 6px 18px #0008; border-color:{_ACCENT}; }}
 .asvg {{ display:block; width:100%; height:auto; }}
-.acap {{ font-size:10px; color:{_MUTED}; padding:4px 6px; font-family:ui-monospace,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.acap {{ font-size:11px; color:{_MUTED}; padding:6px 8px; font-family:ui-monospace,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 footer {{ color:{_MUTED}; font-size:11px; margin-top:24px; text-align:center; }}
 </style></head>
 <body><div class="wrap">

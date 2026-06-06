@@ -90,7 +90,7 @@ def setup_cv_routes() -> APIRouter:
         if images_dir and body.get("samples", True):
             from src.services.cv import imagescan
             result["samples"] = imagescan.sample_annotations(
-                images_dir, labels_dir, n=int(body.get("n_samples", 9)))
+                images_dir, labels_dir, n=int(body.get("n_samples", 12)))
         # Optional (slower) image-pixel scan: brightness/blur/entropy/dups.
         if body.get("image_scan") and images_dir:
             from src.services.cv import imagescan

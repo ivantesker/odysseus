@@ -146,13 +146,35 @@ def sample_annotations(images_dir, labels_dir, *, n: int = 9, max_side: int = 34
     except Exception:
         return []
 
+    from .dataset import parse_label_line as _pl
+
     # Index label files by stem (recursive) so train/val both work.
     lbl_by_stem = {p.stem: p for p in lroot.rglob("*.txt") if p.is_file()}
     imgs = [p for p in sorted(root.rglob("*")) if p.suffix.lower() in IMAGE_EXTS and p.stem in lbl_by_stem]
     if not imgs:
         return []
-    step = max(1, len(imgs) // n)
-    picked = imgs[::step][:n]
+
+    # Pick a REPRESENTATIVE spread (Roboflow-style preview): cover as many
+    # classes as possible, then fill with a range of crowdedness. Peek each
+    # candidate's class set + box count (cheap line parse).
+    meta = []
+    for p in imgs:
+        classes, cnt = set(), 0
+        for raw in lbl_by_stem[p.stem].read_text(encoding="utf-8", errors="replace").splitlines():
+            pr = _pl(raw.strip()) if raw.strip() else None
+            if pr:
+                classes.add(pr[0]); cnt += 1
+        meta.append((p, classes, cnt))
+    picked, seen_classes, chosen = [], set(), set()
+    for p, classes, _cnt in sorted(meta, key=lambda m: -m[2]):  # class coverage first
+        if classes - seen_classes:
+            picked.append(p); seen_classes |= classes; chosen.add(p)
+            if len(picked) >= n:
+                break
+    if len(picked) < n:  # fill with an even spread across crowdedness
+        rest = [m[0] for m in sorted(meta, key=lambda m: -m[2]) if m[0] not in chosen]
+        step = max(1, len(rest) // max(1, n - len(picked)))
+        picked += rest[::step][: n - len(picked)]
 
     out = []
     for p in picked:
