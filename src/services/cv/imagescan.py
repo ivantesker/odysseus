@@ -125,7 +125,7 @@ def scan_images(images_dir, *, sample: int = 400, max_side: int = 256,
     }
 
 
-def sample_annotations(images_dir, labels_dir, *, n: int = 9, max_side: int = 340) -> list:
+def sample_annotations(images_dir, labels_dir, *, n: int = 9, max_side: int = 900) -> list:
     """Return up to n labelled sample images for the report.
 
     Each entry: {name, data_uri (downscaled JPEG/PNG base64), width, height,

@@ -444,8 +444,8 @@ table.warn td.d {{ color:{_MUTED}; }} table.warn .ex {{ color:{_MUTED}; font-siz
 .lb {{ display:none; position:fixed; inset:0; z-index:1000; background:#000d; align-items:center; justify-content:center; padding:2vh; }}
 .lb:target {{ display:flex; }}
 .lb .lbbg {{ position:absolute; inset:0; cursor:zoom-out; }}
-.lb .lbox {{ position:relative; max-width:94vw; max-height:94vh; }}
-.lb .lbox svg {{ max-width:94vw; max-height:88vh; width:auto; height:auto; border:1px solid {_BORDER}; border-radius:8px; background:#000; }}
+.lb .lbox {{ position:relative; display:flex; flex-direction:column; align-items:center; }}
+.lb .lbox svg {{ height:86vh; width:auto; max-width:94vw; border:1px solid {_BORDER}; border-radius:8px; background:#000; }}
 .lb .lbcap {{ color:{_MUTED}; font-size:12px; text-align:center; margin-top:8px; font-family:ui-monospace,monospace; }}
 footer {{ color:{_MUTED}; font-size:11px; margin-top:24px; text-align:center; }}
 </style></head>
