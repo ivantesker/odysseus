@@ -123,9 +123,18 @@ def setup_cv_routes() -> APIRouter:
         iou = float(body.get("iou", 0.5))
         names = body.get("class_names")
         review = {
+            "pr": cv_review_svc.pr_analysis(labels_dir, preds_dir, iou_thr=iou, class_names=names),
             "suspect_labels": cv_review_svc.suspect_labels(labels_dir, preds_dir, iou_thr=iou),
             "confusion_matrix": cv_review_svc.confusion_matrix(labels_dir, preds_dir, iou_thr=iou, class_names=names),
         }
+        images_dir = (body.get("images_dir") or "").strip()
+        if images_dir:
+            from src.services.cv import imagescan
+            fc = cv_review_svc.failure_cases(labels_dir, preds_dir, iou_thr=iou)
+            review["failure_gallery"] = {
+                "rendered": imagescan.render_boxed(images_dir, fc["cases"], class_names=names),
+                "totals": fc["totals"],
+            }
         preds_b = (body.get("preds_b_dir") or "").strip()
         if preds_b:
             review["compare"] = cv_review_svc.compare_models(labels_dir, preds_dir, preds_b, iou_thr=iou, class_names=names)
@@ -139,6 +148,24 @@ def setup_cv_routes() -> APIRouter:
             "suspect_total": review["suspect_labels"]["total"],
             "compare": review.get("compare", {}).get("map_delta") if "compare" in review else None,
         }
+
+    @router.post("/api/cv/eval-aggregate")
+    def cv_eval_aggregate(request: Request, body: dict = Body(...)):
+        """Aggregate every eval CSV under a folder into one comparison report."""
+        require_admin(request)
+        from src.services.cv import evalcsv
+        root = (body.get("root") or "").strip()
+        if not root:
+            raise HTTPException(400, "root is required")
+        agg = evalcsv.aggregate_csvs(root)
+        if agg.get("error") and not agg.get("runs"):
+            raise HTTPException(400, agg["error"])
+        title = (body.get("title") or "Eval aggregate").strip()
+        html = eda_report.render_eval_aggregate_html(agg, title)
+        owner = get_current_user(request)
+        report_id = report_store.save_report(html, owner=owner, meta={"title": title})
+        return {"report_id": report_id, "report_url": f"/api/cv/report/{report_id}",
+                "runs": len(agg.get("runs", [])), "primary": agg.get("primary")}
 
     @router.get("/api/cv/report/{report_id}")
     def cv_get_report(request: Request, report_id: str):

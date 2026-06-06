@@ -319,9 +319,90 @@ def _image_quality_section(scan: dict) -> str:
                     "night/glare/blur frames + duplicates poison training")
 
 
+_KIND = {"tp": ("#50fa7b", "correct"), "fp": ("#e06c75", "false positive"),
+         "fn": ("#f0ad4e", "missed (FN)"), "mismatch": ("#c678dd", "wrong class")}
+
+
+def _failure_gallery(rendered: list, totals: dict) -> str:
+    if not rendered:
+        return ""
+    legend = "".join(
+        f'<span class="lg"><span class="sw" style="background:{c}"></span>{lab}'
+        f'<span class="cnt">{totals.get(k, 0) if k != "tp" else ""}</span></span>'
+        for k, (c, lab) in _KIND.items())
+    legend = f'<div class="legend">{legend}</div>'
+    tiles, lbs = [], []
+    for i, s in enumerate(rendered):
+        w, h = s.get("width", 1), s.get("height", 1)
+        sw = max(2.0, round(max(w, h) / 150, 1))
+        chip_h = max(11, int(max(w, h) / 26))
+        ov = []
+        for b in s.get("boxes", []):
+            if b["kind"] == "tp":
+                continue  # keep the gallery focused on errors
+            c = _KIND.get(b["kind"], ("#fff", ""))[0]
+            cw = max(18, len(b["label"]) * chip_h * 0.55)
+            ty = b["y"] if b["y"] > chip_h else b["y"] + b["h"]
+            ov.append(
+                f'<rect x="{b["x"]}" y="{b["y"]}" width="{b["w"]}" height="{b["h"]}" '
+                f'fill="{c}" fill-opacity="0.10" stroke="{c}" stroke-width="{sw}"/>'
+                f'<rect x="{b["x"]}" y="{ty-chip_h}" width="{cw}" height="{chip_h}" fill="{c}"/>'
+                f'<text x="{b["x"]+3}" y="{ty-chip_h*0.25}" font-size="{int(chip_h*0.72)}" '
+                f'font-weight="700" fill="#0e0f13">{_esc(b["label"])}</text>')
+        svg = (f'<svg viewBox="0 0 {w} {h}" role="img" preserveAspectRatio="xMidYMid meet">'
+               f'<image href="{s["data_uri"]}" x="0" y="0" width="{w}" height="{h}"/>{"".join(ov)}</svg>')
+        cap = f'{_esc(s.get("file",""))} · {s.get("fp",0)}FP {s.get("fn",0)}FN {s.get("mismatch",0)}miss'
+        tiles.append(f'<a class="atile" href="#f{i}">{svg}<div class="acap">{cap}</div></a>')
+        lbs.append(f'<div class="lb" id="f{i}"><a class="lbbg" href="#_"></a>'
+                   f'<div class="lbox">{svg}<div class="lbcap">{cap} — click outside to close</div></div></div>')
+    return _section("Failure gallery (worst images first)",
+                    legend + f'<div class="agrid">{"".join(tiles)}</div>' + "".join(lbs),
+                    "ranked by FP+FN+mismatch — click to zoom")
+
+
+def _pr_section(pr: dict) -> str:
+    per_class = pr.get("per_class", {})
+    if not per_class:
+        return ""
+    W, H, pad = 460, 300, 44
+    pw, ph = W - pad - 16, H - pad - 28
+    grid = [f'<rect x="{pad}" y="12" width="{pw}" height="{ph}" fill="none" stroke="{_BORDER}"/>']
+    for t in range(0, 11, 2):
+        gx = pad + pw * t / 10
+        gy = 12 + ph * (1 - t / 10)
+        grid.append(f'<line x1="{pad}" y1="{gy}" x2="{pad+pw}" y2="{gy}" stroke="{_BORDER}" stroke-opacity="0.3"/>')
+        grid.append(f'<text x="{pad-6}" y="{gy+3}" text-anchor="end" class="val">{t/10:.1f}</text>')
+        grid.append(f'<text x="{gx}" y="{12+ph+14}" text-anchor="middle" class="val">{t/10:.1f}</text>')
+    grid.append(f'<text x="{pad+pw/2}" y="{H-2}" text-anchor="middle" class="val">recall</text>')
+    grid.append(f'<text x="12" y="{12+ph/2}" text-anchor="middle" class="val" transform="rotate(-90 12 {12+ph/2})">precision</text>')
+    lines, rows = [], []
+    for i, (name, c) in enumerate(per_class.items()):
+        col = _BARS[i % len(_BARS)]
+        pts = " ".join(f"{pad + pw * r},{12 + ph * (1 - p)}"
+                       for r, p in zip(c.get("recall", []), c.get("precision", [])))
+        if pts:
+            lines.append(f'<polyline points="{pts}" fill="none" stroke="{col}" stroke-width="2"/>')
+        b = c.get("best", {})
+        rows.append(f'<tr><td><span class="sw" style="background:{col}"></span>{_esc(name)}</td>'
+                    f'<td class="n">{c.get("ap")}</td><td>{b.get("conf")}</td>'
+                    f'<td>{b.get("f1")}</td><td>{b.get("precision")}</td><td>{b.get("recall")}</td></tr>')
+    svg = f'<svg viewBox="0 0 {W} {H}" width="100%" class="chart" role="img">{"".join(grid)}{"".join(lines)}</svg>'
+    table = (f'<table class="warn"><thead><tr><th>class</th><th>AP</th><th>best conf</th>'
+             f'<th>F1</th><th>P</th><th>R</th></tr></thead><tbody>{"".join(rows)}</tbody></table>')
+    cfg = ", ".join(f'"{_esc(k)}": {v}' for k, v in pr.get("recommended_conf", {}).items())
+    rec = f'<p class="muted">recommended per-class conf (max-F1): <code>{{{cfg}}}</code></p>'
+    return _section(f"PR curves + threshold tuning · mAP {pr.get('map')}", svg + table + rec,
+                    "best-F1 confidence per class — put these in the runtime/NMS config")
+
+
 def render_review_html(review: dict, title: str = "Model review") -> str:
     """Render the GT-vs-predictions review: suspects + confusion + model diff."""
     parts = []
+    if review.get("failure_gallery"):
+        fg = review["failure_gallery"]
+        parts.append(_failure_gallery(fg.get("rendered", []), fg.get("totals", {})))
+    if review.get("pr"):
+        parts.append(_pr_section(review["pr"]))
     if review.get("suspect_labels"):
         parts.append(_section("Suspect labels (review these first)", _suspect_table(review["suspect_labels"]),
                               "ranked likely annotation errors from model vs ground truth"))
@@ -341,6 +422,33 @@ def render_review_html(review: dict, title: str = "Model review") -> str:
     if not parts:
         parts.append(_section("Review", '<p class="muted">no review data</p>'))
     return _page(title, "".join(parts))
+
+
+def render_eval_aggregate_html(agg: dict, title: str = "Eval aggregate") -> str:
+    """Render the eval-CSV aggregator: a sortable comparison table + bar chart."""
+    if agg.get("error"):
+        return _page(title, f'<section><p class="err">{_esc(agg["error"])}</p></section>')
+    runs = agg.get("runs", [])
+    metrics = agg.get("metrics", [])
+    primary = agg.get("primary")
+    # Show the primary metric first, then the rest.
+    cols = ([primary] + [m for m in metrics if m != primary]) if primary else metrics
+    head = "".join(f"<th>{_esc(c)}</th>" for c in cols)
+    body_rows = []
+    for r in runs:
+        cells = "".join(
+            f'<td class="{"n" if c == primary else ""}">{_esc(r["metrics"].get(c, "·"))}</td>'
+            for c in cols)
+        body_rows.append(f'<tr><td class="k">{_esc(r["name"])}</td>{cells}</tr>')
+    table = (f'<table class="warn"><thead><tr><th>run</th>{head}</tr></thead>'
+             f'<tbody>{"".join(body_rows)}</tbody></table>')
+    chart = ""
+    if primary:
+        data = {r["name"]: r["metrics"].get(primary, 0) for r in runs if primary in r["metrics"]}
+        chart = f'<h2 style="font-size:12px">{_esc(primary)} by run</h2>' + _bar_chart(data)
+    note = f'{len(runs)} runs · {agg.get("n_files", 0)} CSVs scanned · primary metric: {_esc(primary)}'
+    return _page(title, _section("Eval comparison", f'<p class="muted">{note}</p>' + chart + table,
+                                 "every CSV under the folder, best first"))
 
 
 def render_eda_html(eda: dict, title: str = "Dataset EDA") -> str:

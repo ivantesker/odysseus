@@ -203,6 +203,59 @@ def sample_annotations(images_dir, labels_dir, *, n: int = 9, max_side: int = 90
     return out
 
 
+def render_boxed(images_dir, items, *, max_side: int = 900, class_names=None) -> list:
+    """Decode images and attach displayed-pixel boxes for the failure gallery.
+
+    items: [{file, fp, fn, mismatch, boxes:[{kind, cls, gt_cls?, xyxy(normalized)}]}].
+    Returns the same dicts with data_uri + width/height + boxes in px (x,y,w,h)
+    plus a human label per box. Missing images are skipped.
+    """
+    import base64
+    import io
+
+    root = Path(images_dir)
+    if not root.exists():
+        return []
+    try:
+        from PIL import Image
+    except Exception:
+        return []
+    img_by_stem = {p.stem: p for p in root.rglob("*") if p.suffix.lower() in IMAGE_EXTS}
+
+    def _nm(c):
+        return class_names[c] if class_names and c is not None and c < len(class_names) else str(c)
+
+    out = []
+    for it in items:
+        p = img_by_stem.get(it["file"])
+        if p is None:
+            continue
+        try:
+            with Image.open(p) as im:
+                im = im.convert("RGB")
+                w0, h0 = im.size
+                scale = max_side / max(w0, h0) if max(w0, h0) > max_side else 1.0
+                dw, dh = max(1, int(w0 * scale)), max(1, int(h0 * scale))
+                buf = io.BytesIO()
+                im.resize((dw, dh)).save(buf, format="JPEG", quality=72)
+                uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+            boxes = []
+            for b in it.get("boxes", []):
+                x1, y1, x2, y2 = b["xyxy"]
+                if b["kind"] == "mismatch":
+                    label = f'{_nm(b.get("gt_cls"))}→{_nm(b.get("cls"))}'
+                else:
+                    label = _nm(b.get("cls"))
+                boxes.append({"kind": b["kind"], "label": label,
+                              "x": round(x1 * dw, 1), "y": round(y1 * dh, 1),
+                              "w": round((x2 - x1) * dw, 1), "h": round((y2 - y1) * dh, 1)})
+            out.append({**{k: it[k] for k in ("file", "fp", "fn", "mismatch") if k in it},
+                        "data_uri": uri, "width": dw, "height": dh, "boxes": boxes})
+        except Exception:
+            continue
+    return out
+
+
 def _band_low(vals, pct):
     if not vals:
         return {"count": 0}

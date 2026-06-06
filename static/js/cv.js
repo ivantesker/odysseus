@@ -53,10 +53,11 @@ const _TABS = {
     <label class="cv-chk"><input type="checkbox" id="cv-ds-scan"> image-quality scan (brightness/blur/dups — slower, decodes images)</label>
     <button class="cv-run" data-action="dataset">Run dataset tool</button>`,
   review: () => `
-    <p class="cv-hint">Compare model predictions against ground-truth labels (YOLO .txt, preds add a conf column). Generates a QA report: suspect labels, confusion matrix, A/B model diff.</p>
+    <p class="cv-hint">Compare predictions vs ground-truth (YOLO .txt, preds add a conf column). Report: failure gallery, PR curves + per-class threshold, suspect labels, confusion matrix, A/B model diff.</p>
     ${_field('ground-truth labels dir', 'cv-rv-gt', '', 'D:/rider_dome/yolo_dataset/labels')}
     ${_field('predictions dir (model A)', 'cv-rv-pa', '', 'D:/rider_dome/preds_pt')}
-    ${_field('predictions dir (model B, optional)', 'cv-rv-pb', '', 'D:/rider_dome/preds_rknn_int8')}
+    ${_field('images dir (enables failure gallery)', 'cv-rv-img', '', 'D:/rider_dome/yolo_dataset/images')}
+    ${_field('predictions dir (model B, optional A/B)', 'cv-rv-pb', '', 'D:/rider_dome/preds_rknn_int8')}
     <div class="cv-row">${_field('class_names', 'cv-rv-names', 'Front,Back,Side', '')}${_field('iou', 'cv-rv-iou', '0.5', '0.5')}</div>
     <button class="cv-run" data-action="review">Run review ↗</button>`,
   eval: () => `
@@ -64,7 +65,11 @@ const _TABS = {
     ${_field('data (yaml or images)', 'cv-ev-data', '', 'D:/rider_dome/yolo_dataset/data.yaml')}
     <div class="cv-row">${_field('imgsz', 'cv-ev-imgsz', '256', '256')}${_field('iou', 'cv-ev-iou', '0.5', '0.5')}</div>
     <button class="cv-run" data-action="eval">Run eval (mAP + latency)</button>
-    <p class="cv-hint">needs <code>ultralytics</code> — see requirements-optional.txt</p>`,
+    <p class="cv-hint">needs <code>ultralytics</code> — see requirements-optional.txt</p>
+    <hr style="border:none;border-top:1px solid var(--border,#355a66);margin:16px 0">
+    <p class="cv-hint">Aggregate scattered eval CSVs (results.csv across dated folders) into one comparison ↗ — no deps.</p>
+    ${_field('eval results root', 'cv-ag-root', '', 'D:/rider_dome/eval_results')}
+    <button class="cv-run" data-action="aggregate">Aggregate eval CSVs ↗</button>`,
   convert: () => `
     ${_field('source (.pt)', 'cv-cv-src', '', 'D:/rider_dome/yolov10_training/.../best.pt')}
     <div class="cv-row">
@@ -218,10 +223,13 @@ async function _run(action) {
       data = await _post('/api/cv/review', {
         labels_dir: _val('cv-rv-gt'),
         preds_dir: _val('cv-rv-pa'),
+        images_dir: _val('cv-rv-img'),
         preds_b_dir: _val('cv-rv-pb'),
         class_names: names ? names.split(',').map(s => s.trim()).filter(Boolean) : null,
         iou: parseFloat(_val('cv-rv-iou') || '0.5'),
       });
+    } else if (action === 'aggregate') {
+      data = await _post('/api/cv/eval-aggregate', { root: _val('cv-ag-root') });
     } else if (action === 'eval') {
       data = await _post('/api/cv/eval', {
         model: _val('cv-ev-model'), data: _val('cv-ev-data'),

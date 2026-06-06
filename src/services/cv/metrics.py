@@ -57,6 +57,39 @@ def average_precision(matched: list[bool], scores: list[float], n_gt: int) -> fl
     return float(np.sum((mrec[idx + 1] - mrec[idx]) * mpre[idx + 1]))
 
 
+def pr_curve(matched: list[bool], scores: list[float], n_gt: int, points: int = 50) -> dict:
+    """Precision/recall/F1 vs confidence threshold + the best-F1 operating point.
+
+    Feeds the per-class threshold tuning: the returned ``best`` is the confidence
+    that maximizes F1, which is what you put in the runtime/NMS config per class.
+    """
+    if not matched or n_gt == 0:
+        return {"recall": [], "precision": [], "conf": [], "f1": [],
+                "ap": 0.0, "best": {"conf": 0.25, "f1": 0.0, "precision": 0.0, "recall": 0.0}}
+    order = np.argsort(-np.asarray(scores, dtype=float))
+    tp = np.asarray(matched, dtype=float)[order]
+    conf = np.asarray(scores, dtype=float)[order]
+    tp_cum = np.cumsum(tp)
+    fp_cum = np.cumsum(1.0 - tp)
+    recall = tp_cum / n_gt
+    precision = tp_cum / np.maximum(tp_cum + fp_cum, 1e-12)
+    f1 = 2 * precision * recall / np.maximum(precision + recall, 1e-12)
+    bi = int(np.argmax(f1))
+    ap = average_precision(matched, scores, n_gt)
+    # Downsample the curve for compact SVG.
+    n = len(recall)
+    idx = np.linspace(0, n - 1, min(points, n)).astype(int)
+    return {
+        "recall": [round(float(recall[i]), 4) for i in idx],
+        "precision": [round(float(precision[i]), 4) for i in idx],
+        "conf": [round(float(conf[i]), 4) for i in idx],
+        "f1": [round(float(f1[i]), 4) for i in idx],
+        "ap": round(float(ap), 4),
+        "best": {"conf": round(float(conf[bi]), 4), "f1": round(float(f1[bi]), 4),
+                 "precision": round(float(precision[bi]), 4), "recall": round(float(recall[bi]), 4)},
+    }
+
+
 def match_predictions(preds, gts, iou_thr: float = 0.5):
     """Greedy match predictions to GT (single class), highest score first.
 

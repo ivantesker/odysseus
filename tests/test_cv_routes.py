@@ -117,6 +117,39 @@ def test_review_route_requires_dirs(client):
     assert client.post("/api/cv/review", json={"labels_dir": "x"}).status_code == 400
 
 
+def test_review_route_with_failure_gallery_and_pr(client, tmp_path):
+    pytest.importorskip("PIL")
+    from PIL import Image
+    import numpy as np
+    gt = tmp_path / "gt"; pa = tmp_path / "pa"; img = tmp_path / "img"
+    gt.mkdir(); pa.mkdir(); img.mkdir()
+    rng = np.random.RandomState(0)
+    for i in range(4):
+        Image.fromarray(rng.randint(0, 255, (80, 100, 3), dtype=np.uint8)).save(img / f"{i}.jpg")
+        (gt / f"{i}.txt").write_text("0 0.5 0.5 0.3 0.3\n")
+        (pa / f"{i}.txt").write_text("0 0.5 0.5 0.3 0.3 0.9\n0 0.9 0.9 0.05 0.05 0.8\n")  # 1 FP each
+    r = client.post("/api/cv/review", json={
+        "labels_dir": str(gt), "preds_dir": str(pa), "images_dir": str(img),
+        "class_names": ["car"]})
+    assert r.status_code == 200
+    page = client.get(r.json()["report_url"])
+    assert "Failure gallery" in page.text and "PR curves" in page.text
+
+
+def test_eval_aggregate_route(client, tmp_path):
+    rd = tmp_path / "run_a"; rd.mkdir()
+    (rd / "results.csv").write_text("epoch,metrics/map50-95\n0,0.3\n1,0.45\n")
+    r = client.post("/api/cv/eval-aggregate", json={"root": str(tmp_path)})
+    assert r.status_code == 200
+    assert r.json()["runs"] == 1
+    page = client.get(r.json()["report_url"])
+    assert page.status_code == 200 and "Eval comparison" in page.text
+
+
+def test_eval_aggregate_requires_root(client):
+    assert client.post("/api/cv/eval-aggregate", json={}).status_code == 400
+
+
 def test_inspect_route(client, tmp_path):
     (tmp_path / "images").mkdir(); (tmp_path / "labels").mkdir()
     (tmp_path / "data.yaml").write_text("nc: 2\nnames: ['a', 'b']\n")

@@ -74,6 +74,94 @@ def _match_image(gt, preds, iou_thr):
     return pairs, fp, fn
 
 
+def _match_image_boxes(gt, preds, iou_thr):
+    """Like _match_image but keeps boxes + classifies each into tp/mismatch/fp/fn."""
+    order = sorted(range(len(preds)), key=lambda i: -preds[i][2])
+    used = set()
+    boxes = []
+    n_mismatch = n_fp = 0
+    for i in order:
+        pcls, pbox, conf = preds[i]
+        best_iou, best_j = 0.0, -1
+        for j, (gcls, gbox) in enumerate(gt):
+            if j in used:
+                continue
+            v = iou_xyxy(pbox, gbox)
+            if v > best_iou:
+                best_iou, best_j = v, j
+        if best_j >= 0 and best_iou >= iou_thr:
+            used.add(best_j)
+            gcls = gt[best_j][0]
+            if gcls == pcls:
+                boxes.append({"kind": "tp", "cls": pcls, "xyxy": pbox})
+            else:
+                n_mismatch += 1
+                boxes.append({"kind": "mismatch", "cls": pcls, "gt_cls": gcls, "xyxy": pbox})
+        else:
+            n_fp += 1
+            boxes.append({"kind": "fp", "cls": pcls, "xyxy": pbox})
+    fn = 0
+    for j, (gcls, gbox) in enumerate(gt):
+        if j not in used:
+            fn += 1
+            boxes.append({"kind": "fn", "cls": gcls, "xyxy": gbox})
+    return boxes, n_fp, fn, n_mismatch
+
+
+def failure_cases(labels_dir, preds_dir, iou_thr: float = 0.5,
+                  conf_thr: float = 0.0, limit: int = 24) -> dict:
+    """Rank images by detection failures (FP + FN + class mismatch) for a
+    failure gallery. Each returned case carries the boxes (normalized xyxy)
+    tagged tp/fp/fn/mismatch so the report can draw GT vs prediction errors."""
+    gt = load_labels(labels_dir)
+    preds = load_labels(preds_dir, with_conf=True)
+    stems = set(gt) & set(preds)
+    cases = []
+    totals = {"fp": 0, "fn": 0, "mismatch": 0}
+    for stem in stems:
+        p = [b for b in preds[stem] if b[2] >= conf_thr] if conf_thr else preds[stem]
+        boxes, n_fp, n_fn, n_mismatch = _match_image_boxes(gt[stem], p, iou_thr)
+        score = n_fp + n_fn + 2 * n_mismatch  # mismatches are worse
+        totals["fp"] += n_fp; totals["fn"] += n_fn; totals["mismatch"] += n_mismatch
+        if score > 0:
+            cases.append({"file": stem, "fp": n_fp, "fn": n_fn, "mismatch": n_mismatch,
+                          "score": score, "boxes": boxes})
+    cases.sort(key=lambda c: -c["score"])
+    return {"totals": totals, "n_failing": len(cases), "cases": cases[:limit]}
+
+
+def pr_analysis(labels_dir, preds_dir, iou_thr: float = 0.5, class_names=None) -> dict:
+    """Per-class PR curve + best-F1 confidence threshold → runtime config."""
+    from .metrics import match_predictions, pr_curve
+    gt = load_labels(labels_dir)
+    preds = load_labels(preds_dir, with_conf=True)
+    per_class_preds: dict[int, list] = {}
+    per_class_gt: dict[int, list] = {}
+    for stem in set(gt) | set(preds):
+        for cls, box, conf in preds.get(stem, []):
+            per_class_preds.setdefault(cls, []).append((box, conf))
+        for cls, box in gt.get(stem, []):
+            per_class_gt.setdefault(cls, []).append(box)
+
+    def _nm(c):
+        return class_names[c] if class_names and c < len(class_names) else str(c)
+
+    per_class = {}
+    recommended = {}
+    for c in sorted(set(per_class_preds) | set(per_class_gt)):
+        matched, scores = match_predictions(per_class_preds.get(c, []), per_class_gt.get(c, []), iou_thr)
+        curve = pr_curve(matched, scores, len(per_class_gt.get(c, [])))
+        per_class[_nm(c)] = curve
+        recommended[_nm(c)] = curve["best"]["conf"]
+    maps = [v["ap"] for v in per_class.values()]
+    return {
+        "per_class": per_class,
+        "map": round(sum(maps) / len(maps), 4) if maps else 0.0,
+        "recommended_conf": recommended,
+        "iou_thr": iou_thr,
+    }
+
+
 def suspect_labels(labels_dir, preds_dir, iou_thr: float = 0.5,
                    conf_missing: float = 0.9, limit: int = 200) -> dict:
     """Rank likely annotation errors using model predictions vs ground truth.

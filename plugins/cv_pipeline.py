@@ -114,6 +114,7 @@ def dataset_tools(args, ctx=None):
         "properties": {
             "labels_dir": {"type": "string", "description": "ground-truth YOLO labels"},
             "preds_dir": {"type": "string", "description": "model predictions (<cls> cx cy w h conf)"},
+            "images_dir": {"type": "string", "description": "optional — enables the failure gallery (images with error boxes)"},
             "preds_b_dir": {"type": "string", "description": "optional 2nd model for A/B diff"},
             "class_names": {"type": "array", "items": {"type": "string"}},
             "iou": {"type": "number", "default": 0.5},
@@ -137,9 +138,17 @@ def review_labels(args, ctx=None):
     iou = float(args.get("iou", 0.5))
     names = args.get("class_names")
     review = {
+        "pr": rv.pr_analysis(labels_dir, preds_dir, iou_thr=iou, class_names=names),
         "suspect_labels": rv.suspect_labels(labels_dir, preds_dir, iou_thr=iou),
         "confusion_matrix": rv.confusion_matrix(labels_dir, preds_dir, iou_thr=iou, class_names=names),
     }
+    if (args.get("images_dir") or "").strip():
+        from src.services.cv import imagescan
+        fc = rv.failure_cases(labels_dir, preds_dir, iou_thr=iou)
+        review["failure_gallery"] = {
+            "rendered": imagescan.render_boxed(args["images_dir"], fc["cases"], class_names=names),
+            "totals": fc["totals"],
+        }
     if (args.get("preds_b_dir") or "").strip():
         review["compare"] = rv.compare_models(labels_dir, preds_dir, args["preds_b_dir"], iou_thr=iou, class_names=names)
     title = (args.get("title") or "Model review").strip()

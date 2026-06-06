@@ -43,6 +43,21 @@ def test_map_at_iou():
     assert res["map"] == pytest.approx(0.5)
 
 
+def test_pr_curve_best_f1():
+    curve = mt.pr_curve([True, False, True], [0.9, 0.8, 0.4], n_gt=2)
+    assert 0.0 <= curve["ap"] <= 1.0
+    assert "conf" in curve["best"] and "f1" in curve["best"]
+    assert len(curve["recall"]) == len(curve["precision"]) == len(curve["conf"])
+    perfect = mt.pr_curve([True, True], [0.9, 0.8], n_gt=2)
+    assert perfect["ap"] == 1.0
+    assert perfect["best"]["f1"] == 1.0
+
+
+def test_pr_curve_empty():
+    c = mt.pr_curve([], [], 0)
+    assert c["ap"] == 0.0 and c["recall"] == []
+
+
 def test_latency_summary():
     s = mt.latency_summary([10, 20, 30, 40])
     assert s["count"] == 4

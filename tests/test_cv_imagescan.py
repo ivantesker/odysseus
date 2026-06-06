@@ -68,6 +68,28 @@ def test_sample_annotations_missing_dir():
     assert imagescan.sample_annotations("/no/img", "/no/lbl") == []
 
 
+def test_render_boxed_failure_kinds(tmp_path):
+    img = tmp_path / "images"
+    img.mkdir()
+    rng = np.random.RandomState(0)
+    _img(img / "f1.jpg", rng.randint(0, 255, (100, 120, 3)))
+    items = [{"file": "f1", "fp": 1, "fn": 1, "mismatch": 0, "boxes": [
+        {"kind": "fp", "cls": 0, "xyxy": (0.1, 0.1, 0.3, 0.3)},
+        {"kind": "fn", "cls": 1, "xyxy": (0.5, 0.5, 0.7, 0.7)},
+        {"kind": "mismatch", "cls": 0, "gt_cls": 1, "xyxy": (0.2, 0.6, 0.4, 0.8)},
+    ]}]
+    out = imagescan.render_boxed(str(img), items, class_names=["car", "truck"])
+    assert len(out) == 1
+    r = out[0]
+    assert r["data_uri"].startswith("data:image/jpeg;base64,")
+    assert len(r["boxes"]) == 3
+    kinds = {b["kind"] for b in r["boxes"]}
+    assert kinds == {"fp", "fn", "mismatch"}
+    # mismatch label shows gt→pred
+    mm = next(b for b in r["boxes"] if b["kind"] == "mismatch")
+    assert "→" in mm["label"]
+
+
 def test_laplacian_and_entropy_pure():
     flat = np.full((20, 20), 100.0)
     noisy = np.random.RandomState(0).rand(20, 20) * 255
