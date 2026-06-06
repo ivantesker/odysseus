@@ -262,10 +262,10 @@ def _annotation_samples_section(samples: list, class_names=None, per_class=None)
     if not samples:
         return ""
     legend = _class_legend(per_class or {}, class_names)
-    tiles = []
-    for s in samples:
+    tiles, boxes_overlays = [], []
+    for i, s in enumerate(samples):
         w, h = s.get("width", 1), s.get("height", 1)
-        sw = max(2.0, round(max(w, h) / 150, 1))  # stroke scales with image size → always visible
+        sw = max(2.0, round(max(w, h) / 150, 1))
         chip_h = max(11, int(max(w, h) / 26))
         overlay = []
         for b in s.get("boxes", []):
@@ -280,14 +280,19 @@ def _annotation_samples_section(samples: list, class_names=None, per_class=None)
                 f'<text x="{b["x"]+3}" y="{ty-chip_h*0.25}" font-size="{int(chip_h*0.72)}" '
                 f'font-weight="700" fill="#0e0f13">{_esc(name)}</text>'
             )
-        tiles.append(
-            f'<div class="atile"><svg viewBox="0 0 {w} {h}" class="asvg" role="img" preserveAspectRatio="xMidYMid meet">'
-            f'<image href="{s["data_uri"]}" x="0" y="0" width="{w}" height="{h}"/>{"".join(overlay)}</svg>'
-            f'<div class="acap">{_esc(s.get("name",""))} · {len(s.get("boxes",[]))} boxes</div></div>'
+        ov = "".join(overlay)
+        cap = f'{_esc(s.get("name",""))} · {len(s.get("boxes",[]))} boxes'
+        svg = (f'<svg viewBox="0 0 {w} {h}" role="img" preserveAspectRatio="xMidYMid meet">'
+               f'<image href="{s["data_uri"]}" x="0" y="0" width="{w}" height="{h}"/>{ov}</svg>')
+        # Small tile is an anchor to the full-screen lightbox; pure CSS :target.
+        tiles.append(f'<a class="atile" href="#z{i}">{svg}<div class="acap">{_esc(cap)}</div></a>')
+        boxes_overlays.append(
+            f'<div class="lb" id="z{i}"><a class="lbbg" href="#_"></a>'
+            f'<div class="lbox">{svg}<div class="lbcap">{_esc(cap)} — click outside to close</div></div></div>'
         )
-    body = legend + f'<div class="agrid">{"".join(tiles)}</div>'
+    body = legend + f'<div class="agrid">{"".join(tiles)}</div>' + "".join(boxes_overlays)
     return _section("Annotation gallery", body,
-                    "real images with boxes drawn — eyeball label quality (like Roboflow / Ultralytics HUB)")
+                    "click any image to zoom — eyeball label quality (like Roboflow / Ultralytics HUB)")
 
 
 def _image_quality_section(scan: dict) -> str:
@@ -431,10 +436,17 @@ table.warn td.d {{ color:{_MUTED}; }} table.warn .ex {{ color:{_MUTED}; font-siz
 .legend .sw {{ width:12px; height:12px; border-radius:3px; display:inline-block; }}
 .legend .cnt {{ color:{_MUTED}; font-size:11px; margin-left:2px; }}
 .agrid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }}
-.atile {{ border:1px solid {_BORDER}; border-radius:10px; overflow:hidden; background:#000; transition:transform .12s, box-shadow .12s; }}
+.atile {{ display:block; border:1px solid {_BORDER}; border-radius:10px; overflow:hidden; background:#000; text-decoration:none; color:inherit; cursor:zoom-in; transition:transform .12s, box-shadow .12s; }}
 .atile:hover {{ transform:translateY(-2px); box-shadow:0 6px 18px #0008; border-color:{_ACCENT}; }}
-.asvg {{ display:block; width:100%; height:auto; }}
+.atile svg {{ display:block; width:100%; height:auto; }}
 .acap {{ font-size:11px; color:{_MUTED}; padding:6px 8px; font-family:ui-monospace,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+/* Pure-CSS lightbox: clicking a tile targets its overlay. */
+.lb {{ display:none; position:fixed; inset:0; z-index:1000; background:#000d; align-items:center; justify-content:center; padding:2vh; }}
+.lb:target {{ display:flex; }}
+.lb .lbbg {{ position:absolute; inset:0; cursor:zoom-out; }}
+.lb .lbox {{ position:relative; max-width:94vw; max-height:94vh; }}
+.lb .lbox svg {{ max-width:94vw; max-height:88vh; width:auto; height:auto; border:1px solid {_BORDER}; border-radius:8px; background:#000; }}
+.lb .lbcap {{ color:{_MUTED}; font-size:12px; text-align:center; margin-top:8px; font-family:ui-monospace,monospace; }}
 footer {{ color:{_MUTED}; font-size:11px; margin-top:24px; text-align:center; }}
 </style></head>
 <body><div class="wrap">
