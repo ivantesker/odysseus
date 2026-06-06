@@ -781,10 +781,13 @@ app.include_router(setup_capabilities_routes(model_discovery))
 # Drop-in plugins: any module under plugins/ that uses the registry decorators
 # (register_route/register_tool/register_action) is loaded here with no central
 # wiring. A feature becomes one new file.
-from src.plugin_registry import load_plugins, registered_routers
+from src.plugin_registry import load_plugins, registered_routers, wire_plugin_tools
 _n_plugins = load_plugins()
 for _plugin_router in registered_routers():
     app.include_router(_plugin_router)
+# Make any @register_tool plugins first-class agent tools (parser, prompt,
+# selection, dispatch). Must run after load_plugins so the registry is full.
+wire_plugin_tools()
 
 # Startup summary — one line an operator can grep to see how this instance is
 # configured (version, auth, headless mode, plugins) without digging through
