@@ -14,36 +14,41 @@ from src.auth_helpers import get_current_user
 from src.services.cv import dataset as ds
 from src.services.cv import eda as cv_eda
 from src.services.cv import eda_report, report_store
+from src.services.cv.paths import CvPathError, confine
 
 router = APIRouter()
+
+
+def _p(raw, field: str, *, required: bool = True):
+    """Confine a user path to the allowlist or raise HTTP 400."""
+    try:
+        return confine(raw, required=required, field=field)
+    except CvPathError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 def setup_cv_routes() -> APIRouter:
     @router.post("/api/cv/dataset/lint")
     def cv_dataset_lint(request: Request, body: dict = Body(...)):
         require_admin(request)
-        labels_dir = (body.get("labels_dir") or "").strip()
-        if not labels_dir:
-            raise HTTPException(400, "labels_dir is required")
+        labels_dir = _p(body.get("labels_dir"), "labels_dir")
         return ds.lint_dataset(labels_dir, body.get("num_classes"))
 
     @router.post("/api/cv/dataset/stats")
     def cv_dataset_stats(request: Request, body: dict = Body(...)):
         require_admin(request)
-        images_dir = (body.get("images_dir") or "").strip()
-        labels_dir = (body.get("labels_dir") or "").strip()
-        if not images_dir or not labels_dir:
-            raise HTTPException(400, "images_dir and labels_dir are required")
+        images_dir = _p(body.get("images_dir"), "images_dir")
+        labels_dir = _p(body.get("labels_dir"), "labels_dir")
         return ds.dataset_stats(images_dir, labels_dir, body.get("class_names"))
 
     @router.post("/api/cv/dataset/split")
     def cv_dataset_split(request: Request, body: dict = Body(...)):
         require_admin(request)
-        for k in ("images_dir", "labels_dir", "out_dir"):
-            if not (body.get(k) or "").strip():
-                raise HTTPException(400, f"{k} is required")
+        images_dir = _p(body.get("images_dir"), "images_dir")
+        labels_dir = _p(body.get("labels_dir"), "labels_dir")
+        out_dir = _p(body.get("out_dir"), "out_dir")
         return ds.apply_split(
-            body["images_dir"], body["labels_dir"], body["out_dir"],
+            images_dir, labels_dir, out_dir,
             val_frac=float(body.get("val_frac", 0.2)),
             seed=int(body.get("seed", 0)),
             copy=bool(body.get("copy", True)),
@@ -53,9 +58,7 @@ def setup_cv_routes() -> APIRouter:
     def cv_inspect(request: Request, body: dict = Body(...)):
         """Auto-discover a dataset from its root (data.yaml → dirs + classes)."""
         require_admin(request)
-        root = (body.get("root") or "").strip()
-        if not root:
-            raise HTTPException(400, "root is required")
+        root = _p(body.get("root"), "root")
         result = ds.inspect_dataset(root)
         if result.get("error"):
             raise HTTPException(400, result["error"])
@@ -71,10 +74,8 @@ def setup_cv_routes() -> APIRouter:
     def cv_eda_report(request: Request, body: dict = Body(...)):
         """Compute dataset EDA, render an HTML report, store it, return its URL."""
         require_admin(request)
-        labels_dir = (body.get("labels_dir") or "").strip()
-        if not labels_dir:
-            raise HTTPException(400, "labels_dir is required")
-        images_dir = (body.get("images_dir") or "").strip() or None
+        labels_dir = _p(body.get("labels_dir"), "labels_dir")
+        images_dir = _p(body.get("images_dir"), "images_dir", required=False)
         result = cv_eda.compute_eda(
             labels_dir,
             images_dir=images_dir,
@@ -116,10 +117,8 @@ def setup_cv_routes() -> APIRouter:
         """
         require_admin(request)
         from src.services.cv import review as cv_review_svc
-        labels_dir = (body.get("labels_dir") or "").strip()
-        preds_dir = (body.get("preds_dir") or "").strip()
-        if not labels_dir or not preds_dir:
-            raise HTTPException(400, "labels_dir and preds_dir are required")
+        labels_dir = _p(body.get("labels_dir"), "labels_dir")
+        preds_dir = _p(body.get("preds_dir"), "preds_dir")
         iou = float(body.get("iou", 0.5))
         names = body.get("class_names")
         review = {
@@ -128,7 +127,7 @@ def setup_cv_routes() -> APIRouter:
             "suspect_labels": cv_review_svc.suspect_labels(labels_dir, preds_dir, iou_thr=iou),
             "confusion_matrix": cv_review_svc.confusion_matrix(labels_dir, preds_dir, iou_thr=iou, class_names=names),
         }
-        images_dir = (body.get("images_dir") or "").strip()
+        images_dir = _p(body.get("images_dir"), "images_dir", required=False)
         if images_dir:
             from src.services.cv import imagescan
             fc = cv_review_svc.failure_cases(labels_dir, preds_dir, iou_thr=iou)
@@ -136,7 +135,7 @@ def setup_cv_routes() -> APIRouter:
                 "rendered": imagescan.render_boxed(images_dir, fc["cases"], class_names=names, max_side=640),
                 "totals": fc["totals"],
             }
-        preds_b = (body.get("preds_b_dir") or "").strip()
+        preds_b = _p(body.get("preds_b_dir"), "preds_b_dir", required=False)
         if preds_b:
             review["compare"] = cv_review_svc.compare_models(labels_dir, preds_dir, preds_b, iou_thr=iou, class_names=names)
         title = (body.get("title") or "Model review").strip()
@@ -155,9 +154,7 @@ def setup_cv_routes() -> APIRouter:
         """Aggregate every eval CSV under a folder into one comparison report."""
         require_admin(request)
         from src.services.cv import evalcsv
-        root = (body.get("root") or "").strip()
-        if not root:
-            raise HTTPException(400, "root is required")
+        root = _p(body.get("root"), "root")
         agg = evalcsv.aggregate_csvs(root)
         if agg.get("error") and not agg.get("runs"):
             raise HTTPException(400, agg["error"])
@@ -173,9 +170,7 @@ def setup_cv_routes() -> APIRouter:
         """Generate edge deploy configs (DeepStream + Triton) from an ONNX model."""
         require_admin(request)
         from src.services.cv import deploy as dp
-        onnx = (body.get("onnx") or "").strip()
-        if not onnx:
-            raise HTTPException(400, "onnx path is required")
+        onnx = _p(body.get("onnx"), "onnx")
         names = body.get("class_names")
         ds = dp.deepstream_config(onnx, class_names=names,
                                   network_mode=int(body.get("network_mode", 2)))
@@ -195,11 +190,9 @@ def setup_cv_routes() -> APIRouter:
         """Select a diverse INT8 calibration subset from an images dir."""
         require_admin(request)
         from src.services.cv import deploy as dp
-        images_dir = (body.get("images_dir") or "").strip()
-        if not images_dir:
-            raise HTTPException(400, "images_dir is required")
+        images_dir = _p(body.get("images_dir"), "images_dir")
         res = dp.select_calibration_set(images_dir, n=int(body.get("n", 200)),
-                                        out_file=(body.get("out_file") or "").strip() or None)
+                                        out_file=_p(body.get("out_file"), "out_file", required=False))
         if res.get("error"):
             raise HTTPException(400, res["error"])
         return res
@@ -209,10 +202,8 @@ def setup_cv_routes() -> APIRouter:
         """Convert COCO/VOC/Label-Studio annotations to YOLO."""
         require_admin(request)
         from src.services.cv import convert_data as cd
-        src = (body.get("src") or "").strip()
-        out = (body.get("out_dir") or "").strip()
-        if not src or not out:
-            raise HTTPException(400, "src and out_dir are required")
+        src = _p(body.get("src"), "src")
+        out = _p(body.get("out_dir"), "out_dir")
         res = cd.convert_annotations(src, body.get("format", "coco"), out, body.get("class_names"))
         if res.get("error"):
             raise HTTPException(400, res["error"])
@@ -233,9 +224,7 @@ def setup_cv_routes() -> APIRouter:
         """Leak-free stratified train/val split (keeps each source together)."""
         require_admin(request)
         from src.services.cv import convert_data as cd
-        labels_dir = (body.get("labels_dir") or "").strip()
-        if not labels_dir:
-            raise HTTPException(400, "labels_dir is required")
+        labels_dir = _p(body.get("labels_dir"), "labels_dir")
         res = cd.stratified_split(labels_dir, val_frac=float(body.get("val_frac", 0.2)),
                                   seed=int(body.get("seed", 0)),
                                   source_regex=(body.get("source_regex") or "").strip() or None,
@@ -249,9 +238,7 @@ def setup_cv_routes() -> APIRouter:
         """Register a training run (Ultralytics dir) into the local registry."""
         require_admin(request)
         from src.services.cv import runs as cv_runs
-        run_dir = (body.get("run_dir") or "").strip()
-        if not run_dir:
-            raise HTTPException(400, "run_dir is required")
+        run_dir = _p(body.get("run_dir"), "run_dir")
         rec = cv_runs.register_run(run_dir, name=body.get("name"), owner=get_current_user(request))
         if rec.get("error"):
             raise HTTPException(400, rec["error"])
@@ -268,9 +255,10 @@ def setup_cv_routes() -> APIRouter:
         """Compare training runs (overlay curves + final table + config diff)."""
         require_admin(request)
         from src.services.cv import runs as cv_runs
-        run_dirs = body.get("run_dirs") or []
-        if not run_dirs:
+        raw_dirs = body.get("run_dirs") or []
+        if not raw_dirs:
             raise HTTPException(400, "run_dirs is required")
+        run_dirs = [_p(d, "run_dir") for d in raw_dirs]
         cmp = cv_runs.compare_runs(run_dirs, names=body.get("names"))
         if cmp.get("error"):
             raise HTTPException(400, cmp["error"])
@@ -285,10 +273,8 @@ def setup_cv_routes() -> APIRouter:
         """PSI drift of model predictions on new data vs a baseline."""
         require_admin(request)
         from src.services.cv import drift as cv_drift
-        base = (body.get("baseline_preds") or "").strip()
-        new = (body.get("new_preds") or "").strip()
-        if not base or not new:
-            raise HTTPException(400, "baseline_preds and new_preds are required")
+        base = _p(body.get("baseline_preds"), "baseline_preds")
+        new = _p(body.get("new_preds"), "new_preds")
         d = cv_drift.drift(base, new)
         if d.get("error"):
             raise HTTPException(400, d["error"])

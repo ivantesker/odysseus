@@ -15,6 +15,22 @@ from __future__ import annotations
 
 from src.plugin_registry import register_tool
 from src.services.cv import dataset as ds
+from src.services.cv.paths import CvPathError, confine
+
+
+def _confine_args(args: dict, fields: list) -> dict:
+    """Confine path args in-place to the tool allowlist. fields: [(name, required)].
+
+    Returns the args; raises CvPathError on a path outside the allowed roots so
+    a prompt-injected agent can't read/write arbitrary locations.
+    """
+    for name, required in fields:
+        val = args.get(name)
+        if name == "run_dirs" and isinstance(val, list):
+            args[name] = [confine(d, field=name) for d in val]
+        elif required or (val is not None and str(val).strip()):
+            args[name] = confine(val, required=required, field=name)
+    return args
 
 
 # ── dataset_tools ─────────────────────────────────────────────────────────────
@@ -53,6 +69,10 @@ from src.services.cv import dataset as ds
     ),
 )
 def dataset_tools(args, ctx=None):
+    try:
+        _confine_args(args, [("labels_dir", False), ("images_dir", False), ("out_dir", False)])
+    except CvPathError as e:
+        return {"error": str(e), "exit_code": 1}
     action = (args.get("action") or "").strip().lower()
     if action == "lint":
         if not args.get("labels_dir"):
@@ -129,6 +149,11 @@ def dataset_tools(args, ctx=None):
     ),
 )
 def review_labels(args, ctx=None):
+    try:
+        _confine_args(args, [("labels_dir", False), ("preds_dir", False),
+                             ("images_dir", False), ("preds_b_dir", False)])
+    except CvPathError as e:
+        return {"error": str(e), "exit_code": 1}
     labels_dir = (args.get("labels_dir") or "").strip()
     preds_dir = (args.get("preds_dir") or "").strip()
     if not labels_dir or not preds_dir:
@@ -206,6 +231,10 @@ def review_labels(args, ctx=None):
     ),
 )
 def deploy_config(args, ctx=None):
+    try:
+        _confine_args(args, [("onnx", False)])
+    except CvPathError as e:
+        return {"error": str(e), "exit_code": 1}
     onnx = (args.get("onnx") or "").strip()
     if not onnx:
         return {"error": "deploy_config needs onnx", "exit_code": 1}
@@ -264,6 +293,10 @@ def deploy_config(args, ctx=None):
     ),
 )
 def convert_dataset(args, ctx=None):
+    try:
+        _confine_args(args, [("src", False), ("out_dir", False)])
+    except CvPathError as e:
+        return {"error": str(e), "exit_code": 1}
     src = (args.get("src") or "").strip()
     out = (args.get("out_dir") or "").strip()
     if not src or not out:
@@ -302,6 +335,10 @@ def convert_dataset(args, ctx=None):
     ),
 )
 def compare_runs(args, ctx=None):
+    try:
+        _confine_args(args, [("run_dirs", False)])
+    except CvPathError as e:
+        return {"error": str(e), "exit_code": 1}
     run_dirs = args.get("run_dirs") or []
     if not run_dirs:
         return {"error": "compare_runs needs run_dirs", "exit_code": 1}
@@ -342,6 +379,10 @@ def compare_runs(args, ctx=None):
     ),
 )
 def drift_check(args, ctx=None):
+    try:
+        _confine_args(args, [("baseline_preds", False), ("new_preds", False)])
+    except CvPathError as e:
+        return {"error": str(e), "exit_code": 1}
     base = (args.get("baseline_preds") or "").strip()
     new = (args.get("new_preds") or "").strip()
     if not base or not new:
@@ -386,6 +427,10 @@ def drift_check(args, ctx=None):
     ),
 )
 def eval_detector(args, ctx=None):
+    try:
+        _confine_args(args, [("model", False), ("data", False)])
+    except CvPathError as e:
+        return {"error": str(e), "exit_code": 1}
     model = (args.get("model") or "").strip()
     data = (args.get("data") or "").strip()
     if not model or not data:
@@ -452,6 +497,10 @@ def eval_detector(args, ctx=None):
 def convert_model(args, ctx=None):
     import os
 
+    try:
+        _confine_args(args, [("source", False), ("calib_image", False), ("sample_image", False)])
+    except CvPathError as e:
+        return {"error": str(e), "exit_code": 1}
     source = (args.get("source") or "").strip()
     if not source or not os.path.exists(source):
         return {"error": f"source model not found: {source}", "exit_code": 1}

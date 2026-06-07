@@ -45,6 +45,19 @@ def test_dataset_lint_requires_labels_dir(client):
     assert r.status_code == 400
 
 
+def test_route_rejects_path_outside_allowlist(client):
+    # Confinement: a path outside data/ + temp + extra-roots → 400, no FS touch.
+    r = client.post("/api/cv/dataset/lint", json={"labels_dir": "/etc"})
+    assert r.status_code == 400
+
+
+def test_route_allows_tmp_path(client, tmp_path):
+    lbl = tmp_path / "labels"; lbl.mkdir()
+    (lbl / "a.txt").write_text("0 .5 .5 .2 .2\n")
+    r = client.post("/api/cv/dataset/lint", json={"labels_dir": str(lbl), "num_classes": 3})
+    assert r.status_code == 200  # temp dir is on the allowlist
+
+
 def test_dataset_stats_route(client, tmp_path):
     img = tmp_path / "images"; lbl = tmp_path / "labels"
     img.mkdir(); lbl.mkdir()
@@ -179,12 +192,13 @@ def test_split_stratified_route(client, tmp_path):
     assert r.json()["n_train"] + r.json()["n_val"] == 10
 
 
-def test_deploy_route(client, monkeypatch):
+def test_deploy_route(client, monkeypatch, tmp_path):
     from src.services.cv import deploy
     monkeypatch.setattr(deploy, "read_onnx_io", lambda p: {
         "inputs": [{"name": "images", "shape": [1, 3, 256, 256], "dtype": "tensor(float)"}],
         "outputs": [{"name": "out", "shape": [1, 84, 100], "dtype": "tensor(float)"}], "size_mb": 5})
-    r = client.post("/api/cv/deploy", json={"onnx": "m.onnx", "class_names": ["car"]})
+    onnx = tmp_path / "m.onnx"; onnx.write_bytes(b"x")  # allowlisted path
+    r = client.post("/api/cv/deploy", json={"onnx": str(onnx), "class_names": ["car"]})
     assert r.status_code == 200
     body = r.json()
     assert body["input_hw"] == [256, 256] and body["outputs"] == ["out"]

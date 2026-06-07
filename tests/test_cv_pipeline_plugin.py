@@ -46,18 +46,30 @@ def test_eval_detector_missing_args():
     assert cv.eval_detector({})["exit_code"] == 1
 
 
-def test_eval_detector_without_ultralytics_is_graceful():
+def test_eval_detector_without_ultralytics_is_graceful(tmp_path):
     # ultralytics is not a dependency of the ollama-only app; the tool must
-    # return a clear install message, not raise.
-    res = cv.eval_detector({"model": "x.pt", "data": "d.yaml"})
+    # return a clear install message, not raise. Paths are under the temp
+    # allowlist so they pass confinement and reach the ultralytics check.
+    model = tmp_path / "x.pt"; model.write_bytes(b"x")
+    data = tmp_path / "d.yaml"; data.write_text("nc: 1\n")
+    res = cv.eval_detector({"model": str(model), "data": str(data)})
     assert res["exit_code"] == 1
     assert "ultralytics" in res["error"].lower() or "eval failed" in res["error"].lower()
 
 
-def test_convert_model_missing_source():
-    res = cv.convert_model({"source": "/no/such/model.pt"})
+def test_convert_model_missing_source(tmp_path):
+    # An allowlisted-but-nonexistent path → "not found".
+    res = cv.convert_model({"source": str(tmp_path / "nope.pt")})
     assert res["exit_code"] == 1
     assert "not found" in res["error"].lower()
+
+
+def test_cv_tool_rejects_path_outside_allowlist():
+    # A path outside data/ + temp + extra-roots is rejected by confinement
+    # (prompt-injection guard), before any work.
+    res = cv.dataset_tools({"action": "lint", "labels_dir": "/etc"})
+    assert res["exit_code"] == 1
+    assert "allowed roots" in res["error"].lower() or "labels_dir" in res["error"].lower()
 
 
 def test_parity_input_never_zeros(tmp_path):

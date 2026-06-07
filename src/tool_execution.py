@@ -213,6 +213,15 @@ def _tool_path_roots() -> list[str]:
     if tmpdir:
         roots.append(tmpdir)
 
+    # The platform temp dir (Windows %TEMP%, etc.) — the cross-platform scratch
+    # area, equivalent to /tmp above. Without this, tool paths under the OS temp
+    # are rejected on Windows where /tmp / $TMPDIR don't apply.
+    try:
+        import tempfile
+        roots.append(tempfile.gettempdir())
+    except Exception:
+        pass
+
     # Opt-in extra roots from settings.
     try:
         from src.settings import get_setting

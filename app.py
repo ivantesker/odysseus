@@ -38,7 +38,7 @@ load_dotenv(encoding="utf-8-sig")
 import asyncio
 import logging
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Dict
 
 from contextlib import asynccontextmanager
@@ -157,6 +157,22 @@ AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
 if LOCALHOST_BYPASS:
     logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
+    # Fail-loud if the host could be reachable beyond loopback while the
+    # bypass is on. _is_trusted_loopback guards each request, but a bind to
+    # 0.0.0.0 behind a tunnel/reverse proxy is the classic accidental-exposure
+    # footgun — surface it at startup. SECURE_COOKIES off compounds it.
+    _bind_host = (os.getenv("HOST") or os.getenv("ODYSSEUS_HOST") or "").strip()
+    _secure_cookies = os.getenv("SECURE_COOKIES", "false").lower() == "true"
+    if _bind_host and _bind_host not in ("127.0.0.1", "localhost", "::1", ""):
+        logger.critical(
+            "SECURITY: LOCALHOST_BYPASS=true while bound to '%s' (non-loopback). "
+            "Anything that reaches loopback-from-its-view (tunnel/proxy) skips auth. "
+            "Set LOCALHOST_BYPASS=false or bind to 127.0.0.1.", _bind_host)
+    if not _secure_cookies:
+        logger.warning(
+            "SECURE_COOKIES is not enabled — session cookies are sent without the "
+            "Secure flag. Set SECURE_COOKIES=true if this instance is reachable over "
+            "anything but plain loopback (Tailscale/tunnel/HTTPS).")
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
@@ -323,7 +339,7 @@ if AUTH_ENABLED:
                                 _db = SessionLocal()
                                 try:
                                     _db.query(ApiToken).filter(ApiToken.id == tid).update(
-                                        {"last_used_at": datetime.utcnow()}
+                                        {"last_used_at": datetime.now(UTC).replace(tzinfo=None)}
                                     )
                                     _db.commit()
                                 finally:
@@ -887,7 +903,7 @@ async def get_version():
 
 @app.get("/api/health")
 async def health_check() -> dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()}
 
 @app.get("/api/ready")
 async def readiness_check() -> JSONResponse:
