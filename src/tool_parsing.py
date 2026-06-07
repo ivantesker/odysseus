@@ -10,7 +10,7 @@ import json
 import logging
 from typing import List, Optional
 
-from src.agent_tools import ToolBlock, TOOL_TAGS
+from src.tool_types import ToolBlock, TOOL_TAGS
 
 logger = logging.getLogger(__name__)
 
