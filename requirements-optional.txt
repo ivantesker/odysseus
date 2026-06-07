@@ -34,3 +34,17 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.5
+
+# CV pipeline tools (plugins/cv_pipeline.py): eval_detector + convert_model.
+# The dataset_tools action (lint/stats/split) is pure-Python and needs NONE of
+# these. eval/convert lazy-import them and return a clear install message if
+# absent, so the app stays light. Install what your workflow needs:
+#   ultralytics            — YOLO load/export/val (eval_detector, ONNX export)
+#   onnx, onnxruntime      — ONNX save + PT-vs-ONNX parity inference
+#   onnxconverter-common   — FP16 conversion of the ONNX graph
+#   rknn-toolkit2          — RK3588/RKNN export (from ezrknn-toolkit2)
+# ultralytics
+# onnx
+# onnxruntime
+# onnxconverter-common
+# rknn-toolkit2

@@ -38,7 +38,7 @@ load_dotenv(encoding="utf-8-sig")
 import asyncio
 import logging
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Dict
 
 from contextlib import asynccontextmanager
@@ -157,6 +157,22 @@ AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
 if LOCALHOST_BYPASS:
     logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
+    # Fail-loud if the host could be reachable beyond loopback while the
+    # bypass is on. _is_trusted_loopback guards each request, but a bind to
+    # 0.0.0.0 behind a tunnel/reverse proxy is the classic accidental-exposure
+    # footgun — surface it at startup. SECURE_COOKIES off compounds it.
+    _bind_host = (os.getenv("HOST") or os.getenv("ODYSSEUS_HOST") or "").strip()
+    _secure_cookies = os.getenv("SECURE_COOKIES", "false").lower() == "true"
+    if _bind_host and _bind_host not in ("127.0.0.1", "localhost", "::1", ""):
+        logger.critical(
+            "SECURITY: LOCALHOST_BYPASS=true while bound to '%s' (non-loopback). "
+            "Anything that reaches loopback-from-its-view (tunnel/proxy) skips auth. "
+            "Set LOCALHOST_BYPASS=false or bind to 127.0.0.1.", _bind_host)
+    if not _secure_cookies:
+        logger.warning(
+            "SECURE_COOKIES is not enabled — session cookies are sent without the "
+            "Secure flag. Set SECURE_COOKIES=true if this instance is reachable over "
+            "anything but plain loopback (Tailscale/tunnel/HTTPS).")
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
@@ -323,7 +339,7 @@ if AUTH_ENABLED:
                                 _db = SessionLocal()
                                 try:
                                     _db.query(ApiToken).filter(ApiToken.id == tid).update(
-                                        {"last_used_at": datetime.utcnow()}
+                                        {"last_used_at": datetime.now(UTC).replace(tzinfo=None)}
                                     )
                                     _db.commit()
                                 finally:
@@ -778,13 +794,20 @@ app.include_router(setup_companion_routes())
 from routes.capabilities_routes import setup_capabilities_routes
 app.include_router(setup_capabilities_routes(model_discovery))
 
+# CV pipeline panel (dataset lint/stats/split, eval, convert).
+from routes.cv_routes import setup_cv_routes
+app.include_router(setup_cv_routes())
+
 # Drop-in plugins: any module under plugins/ that uses the registry decorators
 # (register_route/register_tool/register_action) is loaded here with no central
 # wiring. A feature becomes one new file.
-from src.plugin_registry import load_plugins, registered_routers
+from src.plugin_registry import load_plugins, registered_routers, wire_plugin_tools
 _n_plugins = load_plugins()
 for _plugin_router in registered_routers():
     app.include_router(_plugin_router)
+# Make any @register_tool plugins first-class agent tools (parser, prompt,
+# selection, dispatch). Must run after load_plugins so the registry is full.
+wire_plugin_tools()
 
 # Startup summary — one line an operator can grep to see how this instance is
 # configured (version, auth, headless mode, plugins) without digging through
@@ -856,6 +879,10 @@ async def serve_tasks(request: Request):
 async def serve_library(request: Request):
     return await serve_index(request)
 
+@app.get("/cv")
+async def serve_cv(request: Request):
+    return await serve_index(request)
+
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
@@ -876,7 +903,7 @@ async def get_version():
 
 @app.get("/api/health")
 async def health_check() -> dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()}
 
 @app.get("/api/ready")
 async def readiness_check() -> JSONResponse:

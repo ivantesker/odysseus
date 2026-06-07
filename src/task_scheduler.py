@@ -1021,7 +1021,8 @@ class TaskScheduler:
                 kwargs["script" if task.action in ("run_script", "run_local") else "command"] = task.prompt
             # cookbook_serve carries its JSON config in task.prompt — feed it
             # through as `command` so action_cookbook_serve can json.loads it.
-            elif task.action == "cookbook_serve" and task.prompt:
+            elif task.action in ("cookbook_serve", "cv_dataset_health", "cv_drift_check",
+                                 "cv_triton_health") and task.prompt:
                 kwargs["command"] = task.prompt
             result, success = await action_fn(**kwargs)
             return result, success

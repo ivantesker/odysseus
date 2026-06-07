@@ -139,7 +139,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             key=SESSION_COOKIE,
             value=token,
             httponly=True,
-            samesite="lax",
+            # 'strict' over 'lax': the session cookie is never sent on a
+            # cross-site request, neutralizing CSRF-style cookie leakage. For a
+            # directly-accessed self-hosted app the only cost is that a link
+            # from another origin lands logged-out on first load.
+            samesite="strict",
             secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
             path="/",
         )

@@ -10,7 +10,7 @@ import json
 import logging
 from typing import List, Optional
 
-from src.agent_tools import ToolBlock, TOOL_TAGS
+from src.tool_types import ToolBlock, TOOL_TAGS
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +19,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Pattern 1: ```bash ... ``` fenced code blocks
-_TOOL_BLOCK_RE = re.compile(
-    r"```(" + "|".join(TOOL_TAGS) + r")\s*\n([\s\S]*?)```",
-    re.IGNORECASE,
-)
+def _compile_tool_block_re() -> "re.Pattern":
+    # Longest tags first so a tag that is a prefix of another can't shadow it.
+    tags = sorted(TOOL_TAGS, key=len, reverse=True)
+    return re.compile(
+        r"```(" + "|".join(re.escape(t) for t in tags) + r")\s*\n([\s\S]*?)```",
+        re.IGNORECASE,
+    )
+
+
+_TOOL_BLOCK_RE = _compile_tool_block_re()
+
+
+def register_extra_tool_tags(names) -> None:
+    """Add tool fence tags at runtime (e.g. plugin tools) and rebuild the block
+    regex. TOOL_TAGS is shared with src.agent_tools, so this also teaches the
+    [TOOL_CALL]/<invoke> parsers about the new names."""
+    global _TOOL_BLOCK_RE
+    before = len(TOOL_TAGS)
+    TOOL_TAGS.update(names)
+    if len(TOOL_TAGS) != before:
+        _TOOL_BLOCK_RE = _compile_tool_block_re()
 
 # Pattern 2: [TOOL_CALL] ... [/TOOL_CALL] blocks (some models use this format)
 # Matches: {tool => "shell", args => {--command "ls -la"}} etc.

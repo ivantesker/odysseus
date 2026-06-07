@@ -2192,6 +2192,101 @@ async def action_cookbook_serve(
     return f"Launched {repo_id} (session {sid})", True
 
 
+async def action_cv_dataset_health(owner: str, command: str | None = None, **kwargs) -> tuple[str, bool]:
+    """Scheduled dataset health check: lint/stats/warnings → memory + summary.
+
+    Config (task prompt as JSON): {labels_dir, images_dir?, class_names?, num_classes?}.
+    """
+    import json
+    cfg = {}
+    if command:
+        try:
+            cfg = json.loads(command)
+        except Exception:
+            pass
+    labels_dir = (cfg.get("labels_dir") or "").strip()
+    if not labels_dir:
+        raise TaskNoop("cv_dataset_health: set the task prompt to JSON with a labels_dir")
+    from src.services.cv import eda as cv_eda
+    from src.services.cv.cv_memory import remember_cv
+    r = cv_eda.compute_eda(labels_dir, images_dir=(cfg.get("images_dir") or None),
+                           class_names=cfg.get("class_names"), num_classes=cfg.get("num_classes"))
+    if r.get("error"):
+        return f"cv_dataset_health failed: {r['error']}", False
+    s = r["summary"]
+    hs = r.get("health_score", {})
+    remember_cv(f"Dataset health {labels_dir}: grade {hs.get('grade')} ({hs.get('score')}/100), "
+                f"{s['boxes']} boxes / {s['images']} imgs, imbalance {s.get('class_balance_ratio')}×, "
+                f"recommendations: {r.get('recommendations')}", owner=owner, category="project")
+    return (f"Dataset health {hs.get('grade')} ({hs.get('score')}/100) — {s['images']} imgs, "
+            f"{s['boxes']} boxes, imbalance {s.get('class_balance_ratio')}×, "
+            f"warnings {r.get('warning_counts')}"), True
+
+
+async def action_cv_drift_check(owner: str, command: str | None = None, **kwargs) -> tuple[str, bool]:
+    """Scheduled drift check: PSI of new predictions vs a baseline → alert + event.
+
+    Config (task prompt as JSON): {baseline_preds, new_preds}.
+    """
+    import json
+    cfg = {}
+    if command:
+        try:
+            cfg = json.loads(command)
+        except Exception:
+            pass
+    base = (cfg.get("baseline_preds") or "").strip()
+    new = (cfg.get("new_preds") or "").strip()
+    if not base or not new:
+        raise TaskNoop("cv_drift_check: set the task prompt to JSON with baseline_preds + new_preds")
+    from src.services.cv import drift as cv_drift
+    from src.services.cv.cv_memory import remember_cv
+    d = cv_drift.drift(base, new)
+    if d.get("error"):
+        return f"cv_drift_check failed: {d['error']}", False
+    det = d["detection_rate"]["delta"]
+    if d["alert"]:
+        try:
+            from src.event_bus import fire_event
+            fire_event("drift_detected", owner=owner)
+        except Exception:
+            pass
+        remember_cv(f"Drift alert ({new} vs {base}): {d['overall_verdict']}, max PSI {d['max_psi']}, "
+                    f"detection-rate Δ {det}", owner=owner, category="project")
+        return (f"⚠ Drift {d['overall_verdict']} — max PSI {d['max_psi']}, detection-rate Δ {det}. "
+                f"Recommend re-eval / retrain."), True
+    return f"No significant drift (max PSI {d['max_psi']}, {d['overall_verdict']}).", True
+
+
+async def action_cv_triton_health(owner: str, command: str | None = None, **kwargs) -> tuple[str, bool]:
+    """Scheduled Triton health probe: server + per-model ready + latency.
+
+    Config (task prompt as JSON): {base_url, models:[...]}.
+    """
+    import json
+    cfg = {}
+    if command:
+        try:
+            cfg = json.loads(command)
+        except Exception:
+            pass
+    base = (cfg.get("base_url") or cfg.get("url") or "").strip()
+    if not base:
+        raise TaskNoop("cv_triton_health: set the task prompt to JSON with a base_url")
+    from src.services.cv import triton
+    from src.services.cv.cv_memory import remember_cv
+    r = triton.check_triton(base, cfg.get("models") or [])
+    if r.get("error") and not r.get("models"):
+        return f"cv_triton_health: {r['error']}", False
+    if r.get("alert"):
+        down = ", ".join(r.get("down", [])) or "server"
+        remember_cv(f"Triton health alert @ {base}: down=[{down}], server_ready={r.get('server_ready')}",
+                    owner=owner, category="project")
+        return f"⚠ Triton not healthy @ {base} — down: {down or 'server not ready'}", True
+    lat = r.get("server_latency_ms")
+    return f"Triton healthy @ {base} ({len(r.get('models', []))} models ready, {lat}ms)", True
+
+
 BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
@@ -2212,6 +2307,9 @@ BUILTIN_ACTIONS = {
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
     "cookbook_serve": action_cookbook_serve,
+    "cv_dataset_health": action_cv_dataset_health,
+    "cv_drift_check": action_cv_drift_check,
+    "cv_triton_health": action_cv_triton_health,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 
@@ -2232,4 +2330,7 @@ BUILTIN_ACTION_INFO = {
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
+    "cv_dataset_health": "Scheduled YOLO dataset health check (lint/stats/warnings → grade + recommendations, saved to memory). Task prompt = JSON {labels_dir, images_dir?, class_names?}.",
+    "cv_drift_check": "Scheduled prediction-drift check (PSI of new predictions vs a baseline); alerts + fires drift_detected on shift. Task prompt = JSON {baseline_preds, new_preds}.",
+    "cv_triton_health": "Scheduled Triton Inference Server health probe (server + per-model ready + latency); alerts when a model is down. Task prompt = JSON {base_url, models:[...]}.",
 }

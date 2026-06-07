@@ -99,7 +99,8 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         sess.headers = {}
         return True
     except Exception:
-        db.rollback()
+        from src.route_helpers import logged_rollback
+        logged_rollback(db, logger, "clear stale session endpoint")
         return False
     finally:
         db.close()

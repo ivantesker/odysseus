@@ -213,6 +213,15 @@ def _tool_path_roots() -> list[str]:
     if tmpdir:
         roots.append(tmpdir)
 
+    # The platform temp dir (Windows %TEMP%, etc.) — the cross-platform scratch
+    # area, equivalent to /tmp above. Without this, tool paths under the OS temp
+    # are rejected on Windows where /tmp / $TMPDIR don't apply.
+    try:
+        import tempfile
+        roots.append(tempfile.gettempdir())
+    except Exception:
+        pass
+
     # Opt-in extra roots from settings.
     try:
         from src.settings import get_setting
@@ -1130,6 +1139,22 @@ async def _direct_fallback(
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+def _plugin_tool_names() -> set:
+    try:
+        from src.plugin_registry import plugin_tool_names
+        return plugin_tool_names()
+    except Exception:
+        return set()
+
+
+def _plugin_admin_tools() -> set:
+    try:
+        from src.plugin_registry import plugin_admin_tools
+        return plugin_admin_tools()
+    except Exception:
+        return set()
+
+
 async def execute_tool_block(
     block: Any,
     session_id: str | None = None,
@@ -1203,6 +1228,12 @@ async def execute_tool_block(
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' requires an admin user.", "exit_code": 1}
         logger.warning("Admin tool blocked for non-admin owner=%r tool=%s", owner, tool)
+        return desc, result
+
+    if tool in _plugin_admin_tools() and not _owner_is_admin(owner):
+        desc = f"{tool}: BLOCKED"
+        result = {"error": f"Tool '{tool}' requires an admin user.", "exit_code": 1}
+        logger.warning("Admin plugin tool blocked for non-admin owner=%r tool=%s", owner, tool)
         return desc, result
 
     if is_public_blocked_tool(tool) and not _owner_is_admin(owner):
@@ -1476,6 +1507,12 @@ async def execute_tool_block(
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
+    elif tool in _plugin_tool_names():
+        from src.plugin_registry import run_plugin_tool
+        desc = tool
+        result = await run_plugin_tool(
+            tool, content, owner=owner, session_id=session_id, workspace=workspace
+        )
     else:
         desc = f"unknown: {tool}"
         result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
